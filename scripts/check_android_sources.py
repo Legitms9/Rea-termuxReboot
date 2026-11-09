@@ -361,17 +361,28 @@ def check_internal_calls(root: Path) -> None:
         return  # aviso já emitido por check_java_syntax
     types = _collect_types(root)
     closed = _closed_types(types)
+    files_total = len(sorted(root.glob("app/src/main/java/**/*.java")) +
+                      sorted(root.glob("vendor/*/*/src/main/java/**/*.java")))
+    if files_total == 0:
+        err("nenhum arquivo Java encontrado em app/src/main/java — o projeto não foi "
+            "encontrado no caminho esperado (--repo correto?)")
+        return
     if not types:
+        err(f"nenhum dos {files_total} arquivo(s) Java pôde ser analisado — o analisador "
+            "está quebrado e a validação não estaria acontecendo")
         return
 
     checked = 0
+    parsed_ok = 0
     reported: set[tuple[str, str, str]] = set()
 
-    def visit(body, scope: dict[str, str], path: Path) -> None:
+    def visit(nodes_in, scope: dict[str, str], path: Path) -> None:
         nonlocal checked
-        if body is None:
+        if nodes_in is None:
             return
-        nodes = list(_walk(body))
+        nodes = []
+        for item in nodes_in:
+            nodes.extend(_walk(item) if hasattr(item, "children") else [item])
         # locais do próprio corpo (inclui lambdas aninhados)
         for node in nodes:
             if not isinstance(node, javalang.tree.LocalVariableDeclaration):
@@ -409,6 +420,7 @@ def check_internal_calls(root: Path) -> None:
             tree = javalang.parse.parse(path.read_text("utf-8", "ignore"))
         except JAVA_PARSE_ERROR:
             continue
+        parsed_ok += 1
         for _, cls in tree.filter(javalang.tree.ClassDeclaration):
             fields: dict[str, str] = {}
             for _, fdecl in cls.filter(javalang.tree.FieldDeclaration):
@@ -419,10 +431,17 @@ def check_internal_calls(root: Path) -> None:
                     fields[decl.name] = ftype
             for method in list(cls.methods) + list(cls.constructors):
                 visit(method.body, dict(fields), path)
+            # `private Helper h = new Helper();` roda na inicialização, não num método
+            for fdecl in cls.fields:
+                for decl in fdecl.declarators:
+                    if decl.initializer is not None:
+                        visit([decl.initializer], dict(fields), path)
 
-    if checked == 0 and closed:
-        err("nenhuma chamada interna foi verificada — o analisador Java provavelmente "
-            "está quebrado (não deixe isso passar em silêncio)")
+    if files_total and parsed_ok == 0:
+        # O analisador já falhou em silêncio uma vez (um except engoliu um NameError e o
+        # check inteiro virou fumaça). Se nenhum arquivo foi lido, isso é erro, não "ok".
+        err(f"nenhum dos {files_total} arquivo(s) Java pôde ser analisado — o analisador "
+            "está quebrado e a validação não estaria acontecendo")
 
 
 # ------------------------------------------------- interfaces implementadas por completo
@@ -548,6 +567,134 @@ def check_style_parents(root: Path) -> None:
             f'Adicione parent="" se nao quiser heranca.')
 
 
+# ------------------------------------------------------- aridade das próprias chamadas
+# Chamar `metodo(a, b)` quando ele recebe 3 argumentos é erro de compilação — e, de novo,
+# só apareceria no fim da fila. Aqui comparamos a contagem de argumentos com a assinatura
+# das classes do próprio projeto (inclui métodos estáticos chamados por Classe.metodo()).
+
+
+def check_call_arity(root: Path) -> None:
+    if javalang is None:
+        return
+    sources = sorted(root.glob("app/src/main/java/**/*.java")) + \
+        sorted(root.glob("vendor/*/*/src/main/java/**/*.java"))
+    # nome -> {metodo: [(min_args, max_args)]}
+    arity: dict[str, dict[str, list[tuple[int, int | None]]]] = {}
+    ctor_arity: dict[str, list[tuple[int, int | None]]] = {}
+
+    def arities(params) -> tuple[int, int | None]:
+        total = len(params)
+        if total and getattr(params[-1], "varargs", False):
+            return total - 1, None  # varargs: mínimo n-1, máximo ilimitado
+        return total, total
+
+    parents: dict[str, str | None] = {}
+    files: list[tuple[Path, object]] = []
+    for path in sources:
+        try:
+            tree = javalang.parse.parse(path.read_text("utf-8", "ignore"))
+        except JAVA_PARSE_ERROR:
+            continue
+        files.append((path, tree))
+        for _, cls in tree.filter(javalang.tree.ClassDeclaration):
+            methods = arity.setdefault(cls.name, {})
+            for m in cls.methods:
+                methods.setdefault(m.name, []).append(arities(m.parameters))
+            ctor_arity[cls.name] = [arities(c.parameters) for c in cls.constructors]
+            parents[cls.name] = cls.extends.name if cls.extends else None
+
+    def with_inherited(name: str, seen: frozenset[str] = frozenset()) -> dict[str, list]:
+        """Métodos próprios + herdados de superclasses do projeto.
+
+        `TerminalSession` extends `TerminalOutput`: sem isso, `session.write("x")` parece
+        ter 1 argumento quando a sobrecarga com String está na superclasse.
+        """
+        if name in seen:
+            return {}
+        merged: dict[str, list] = {}
+        parent = parents.get(name)
+        if parent:
+            for mname, ranges in with_inherited(parent, seen | {name}).items():
+                merged.setdefault(mname, []).extend(ranges)
+        for mname, ranges in arity.get(name, {}).items():
+            # sobrecargas SOMAM: update() trocaria a lista do pai pela do filho e
+            # esconderia a versão herdada (foi o que escondeu TerminalOutput.write)
+            merged.setdefault(mname, []).extend(ranges)
+        return merged
+
+    arity = {name: with_inherited(name) for name in arity}
+
+    def accepts(ranges, count: int) -> bool:
+        for lo, hi in ranges:
+            if count >= lo and (hi is None or count <= hi):
+                return True
+        return False
+
+    reported: set[tuple[str, str, str, int]] = set()
+    for path, tree in files:
+        for _, cls in tree.filter(javalang.tree.ClassDeclaration):
+            fields: dict[str, str] = {}
+            for _, fdecl in cls.filter(javalang.tree.FieldDeclaration):
+                ftype = _declared_type(fdecl)
+                if ftype and ftype in arity:
+                    for decl in fdecl.declarators:
+                        fields[decl.name] = ftype
+            bodies = [(m.body, []) for m in cls.methods] + [(c.body, []) for c in cls.constructors]
+            # inicializadores de campo: `private Helper h = new Helper();`
+            bodies.append((None, [decl.initializer for fdecl in cls.fields
+                                  for decl in fdecl.declarators
+                                  if decl.initializer is not None]))
+            for body, extra_roots in bodies:
+                nodes = list(_walk(body)) if body is not None else []
+                for root_node in extra_roots:
+                    nodes.extend(_walk(root_node))
+                scope = dict(fields)
+                for node in nodes:
+                    if isinstance(node, javalang.tree.LocalVariableDeclaration):
+                        ltype = _declared_type(node)
+                        if ltype and ltype in arity:
+                            for decl in node.declarators:
+                                scope[decl.name] = ltype
+                for node in nodes:
+                    if not isinstance(node, (javalang.tree.MethodInvocation,
+                                             javalang.tree.ClassCreator)):
+                        continue
+                    qualifier = getattr(node, "qualifier", None) or ""
+                    if not isinstance(node, javalang.tree.ClassCreator):
+                        if not qualifier or "." in qualifier:
+                            continue
+                        target = scope.get(qualifier) or qualifier
+                        if target not in arity:
+                            continue
+                        ranges = arity[target].get(node.member)
+                        label = f"{target}.{node.member}"
+                        if not ranges:
+                            continue  # método inexistente: já reportado
+                    else:
+                        target = getattr(node.type, "name", None)
+                        sub = getattr(getattr(node.type, "sub_type", None), "name", None)
+                        if sub and not (node.arguments or ()):
+                            continue  # `new X.Listener() { ... }`: classe anônima da interface
+                        if not target or target not in arity:
+                            continue
+                        ranges = ctor_arity.get(target) or []
+                        label = f"new {target}"
+                        if not ranges:
+                            continue
+                    count = len(node.arguments or ())
+                    if accepts(ranges, count):
+                        continue
+                    key = (str(path), label, str(count), 0)
+                    if key in reported:
+                        continue
+                    reported.add(key)
+                    allowed = ", ".join(
+                        f"{lo} ou mais" if hi is None else (str(lo) if lo == hi else f"{lo} a {hi}")
+                        for lo, hi in ranges)
+                    err(f"{path.relative_to(root)}: {label}(...) com {count} argumento(s), "
+                        f"mas a assinatura aceita {allowed}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=str(Path(__file__).resolve().parent.parent))
@@ -556,15 +703,29 @@ def main() -> int:
 
     res_dir = root / "app/src/main/res"
     res_types = collect_resources(res_dir)
-    check_resource_refs(root, res_types)
-    check_layout_refs(root)
-    check_findviewbyid(root)
-    check_manifest(root)
-    check_gradle(root)
-    check_java_syntax(root)
-    check_internal_calls(root)
-    check_interface_impls(root)
-    check_style_parents(root)
+
+    def run(label: str, fn) -> None:
+        """Um checador que explode é ERRO, não "ok".
+
+        Já aconteceu aqui: um `except Exception: continue` engoliu um NameError e a
+        validação inteira deixou de acontecer sem avisar ninguém.
+        """
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 — a ideia é justamente não vazar
+            err(f"checador '{label}' falhou com {type(exc).__name__}: {exc} — "
+                "a validação NÃO foi feita")
+
+    run("recursos", lambda: check_resource_refs(root, res_types))
+    run("layouts", lambda: check_layout_refs(root))
+    run("findViewById", lambda: check_findviewbyid(root))
+    run("manifest", lambda: check_manifest(root))
+    run("gradle", lambda: check_gradle(root))
+    run("sintaxe java", lambda: check_java_syntax(root))
+    run("chamadas internas", lambda: check_internal_calls(root))
+    run("interfaces", lambda: check_interface_impls(root))
+    run("estilos", lambda: check_style_parents(root))
+    run("aridade", lambda: check_call_arity(root))
 
     for w in warnings:
         print(f"  · aviso: {w}")

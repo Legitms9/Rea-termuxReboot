@@ -297,6 +297,100 @@ class AndroidSourceChecks(unittest.TestCase):
         errors = self.project.check()
         self.assertTrue(any("@style/Rea.Fantasma" in e for e in errors), errors)
 
+    @needs_javalang
+    def test_aridade_errada_em_chamada(self) -> None:
+        self.project.write("app/src/main/java/io/rea/ide/Helper.java", """\
+            package io.rea.ide;
+            public class Helper {
+                public void work(String a, int b) {}
+            }
+        """)
+        self.project.write("app/src/main/java/io/rea/ide/MainActivity.java", """\
+            package io.rea.ide;
+            public class MainActivity {
+                public void onCreate() {
+                    Helper h = new Helper();
+                    h.work("so um");
+                }
+            }
+        """)
+        errors = self.project.check()
+        self.assertTrue(any("Helper.work" in e and "1 argumento" in e for e in errors), errors)
+
+    @needs_javalang
+    def test_sobrecarga_herdada_da_superclasse_nao_e_falso_positivo(self) -> None:
+        """TerminalSession extends TerminalOutput: write(String) vem do pai."""
+        self.project.write("app/src/main/java/io/rea/ide/Base.java", """\
+            package io.rea.ide;
+            public abstract class Base {
+                public final void write(String data) {}
+                public abstract void write(byte[] data, int offset, int count);
+            }
+        """)
+        self.project.write("app/src/main/java/io/rea/ide/Impl.java", """\
+            package io.rea.ide;
+            public class Impl extends Base {
+                public void write(byte[] data, int offset, int count) {}
+                public void usar() { write("texto com 1 argumento"); }
+            }
+        """)
+        self.assertEqual([], self.project.check())
+
+    @needs_javalang
+    def test_classe_anonima_de_interface_nao_e_construtor(self) -> None:
+        """`new Helper.Listener() { ... }` não é `new Helper()`."""
+        self.project.write("app/src/main/java/io/rea/ide/Helper.java", """\
+            package io.rea.ide;
+            public class Helper {
+                public interface Listener { void aoAbrir(); }
+                public Helper(String a, int b) {}
+            }
+        """)
+        self.project.write("app/src/main/java/io/rea/ide/MainActivity.java", """\
+            package io.rea.ide;
+            public class MainActivity {
+                private Object o = new Helper.Listener() {
+                    @Override public void aoAbrir() {}
+                };
+            }
+        """)
+        self.assertEqual([], self.project.check())
+
+    @needs_javalang
+    def test_construtor_com_numero_errado_de_argumentos(self) -> None:
+        self.project.write("app/src/main/java/io/rea/ide/Helper.java", """\
+            package io.rea.ide;
+            public class Helper { public Helper(String a) {} }
+        """)
+        self.project.write("app/src/main/java/io/rea/ide/MainActivity.java", """\
+            package io.rea.ide;
+            public class MainActivity {
+                private Helper h = new Helper();
+            }
+        """)
+        errors = self.project.check()
+        self.assertTrue(any("new Helper" in e for e in errors), errors)
+
+    @needs_javalang
+    def test_varargs_aceita_qualquer_quantidade(self) -> None:
+        self.project.write("app/src/main/java/io/rea/ide/Helper.java", """\
+            package io.rea.ide;
+            public class Helper {
+                public void run(String cmd, String... args) {}
+            }
+        """)
+        self.project.write("app/src/main/java/io/rea/ide/MainActivity.java", """\
+            package io.rea.ide;
+            public class MainActivity {
+                public void onCreate() {
+                    Helper h = new Helper();
+                    h.run("ls");
+                    h.run("ls", "-l", "-a");
+                }
+            }
+        """)
+        self.assertEqual([], self.project.check())
+
     def test_activity_declarada_sem_classe(self) -> None:
         self.project.write("app/src/main/java/io/rea/ide/MainActivity.java", """\
             package io.rea.ide;
@@ -318,25 +412,25 @@ class AndroidSourceChecks(unittest.TestCase):
         self.assertTrue(any("sintaxe Java inválida" in e for e in errors), errors)
 
     @needs_javalang
-    def test_analisador_quebrado_nao_passa_em_silencio(self) -> None:
-        """Se nada pôde ser analisado, o checador tem que falhar — não imprimir ✓."""
-        original = checker._collect_types
-        # arquivo real que NÃO tem chamadas internas: a varredura roda, verifica zero e
-        # precisa reclamar em vez de dizer "ok"
-        checked = self.project.write("app/src/main/java/io/rea/ide/SemChamadas.java", """\
-            package io.rea.ide;
-            public class SemChamadas {
-                void nada() { int x = 1 + 1; }
-            }
-        """)
-        checker._collect_types = lambda root: {"SemChamadas": {
-            "file": checked, "methods": {"nada"}, "extends": None, "outer": None}}
+    def test_checador_que_explode_vira_erro(self) -> None:
+        """Um checador que levanta exceção não pode virar "✓ ok"."""
+        original = checker.check_style_parents
+
+        def boom(root):
+            raise NameError("name 'javalang' is not defined")
+
+        checker.check_style_parents = boom
         try:
             errors = self.project.check()
         finally:
-            checker._collect_types = original
-        self.assertTrue(any("nenhuma chamada interna" in e for e in errors), errors)
+            checker.check_style_parents = original
+        self.assertTrue(any("estilos" in e and "NameError" in e for e in errors), errors)
 
+    def test_projeto_vazio_de_java_nao_imprime_ok_sem_analisar(self) -> None:
+        import shutil
+        shutil.rmtree(self.project.root / "app/src/main/java")
+        errors = self.project.check()
+        self.assertTrue(any("nenhum" in e and "Java" in e for e in errors), errors)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
