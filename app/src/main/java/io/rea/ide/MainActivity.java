@@ -619,7 +619,7 @@ public class MainActivity extends AppCompatActivity
         terminals.setListener(this);
     }
 
-    private void wireTerminalKeys(ViewGroup terminalPage) {
+    private void wireTerminalKeys(View terminalPage) {
         terminalPage.findViewById(R.id.term_btn_new).setOnClickListener(v -> {
             TerminalManager.Descriptor d = terminals.createSession(cwd, null, null);
             setActiveSession(d);

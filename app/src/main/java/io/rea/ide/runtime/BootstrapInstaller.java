@@ -174,7 +174,12 @@ public final class BootstrapInstaller {
     private void installHelperScripts(File prefix) {
         // These are generated here (not shipped as assets) so the paths always match ReaPaths.
         File etcRea = new File(prefix, "etc/rea");
-        mkdirOrThrow(etcRea);
+        try {
+            mkdirOrThrow(etcRea);
+        } catch (IOException e) {
+            Log.w(TAG, "could not create helper directory " + etcRea, e);
+            return;
+        }
         writeScript(new File(etcRea, "rea-open"),
                 "#!/data/data/" + ReaPaths.packageName() + "/files/usr/bin/sh\n"
                         + "# Open a path in the REA IDE (called by file managers / other apps).\n"
