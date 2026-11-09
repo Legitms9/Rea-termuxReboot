@@ -22,7 +22,7 @@ workflows:
       vars:
         REA_APP_ID: io.rea.ide
         BOOTSTRAP_RELEASE: "bootstrap-2026.11.08-r1+apt.android-7"
-        ABIS: arm64-v8a
+        ABIS: arm64-v8a,armeabi-v7a
         GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g"
       java: 17
       node: 20
@@ -82,8 +82,8 @@ workflows:
       - name: validar o bootstrap (falha aqui, não no celular)
         script: |
           python3 - <<'PY'
-          import json, pathlib, zipfile
-          for abi in ["arm64-v8a"]:
+          import json, os, pathlib, zipfile
+          for abi in os.environ.get("ABIS", "arm64-v8a").split(","):
               p = pathlib.Path(f"app/src/main/jniLibs/{abi}/libtermux-bootstrap.so")
               assert p.exists(), f"bootstrap ausente para {abi}"
               z = zipfile.ZipFile(p)
@@ -139,26 +139,56 @@ workflows:
         script: |
           set -e
           chmod +x gradlew || true
-          # `bash ./gradlew` em vez de ./gradlew: imune a bit de execução perdido no checkout
+          # Um APK por ABI (splits): arm64-v8a para celulares novos, armeabi-v7a para 32 bits.
+          # `bash ./gradlew` em vez de ./gradlew: imune a bit de execução perdido no checkout.
           bash ./gradlew --no-daemon --stacktrace assembleDebug \
             -Prea.bootstrapRelease="$BOOTSTRAP_RELEASE" \
             -Prea.webPrefetched=true
 
-      - name: conferir o APK
+      - name: conferir cada APK (uma ABI por APK)
         script: |
           set -e
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
-          [ -n "$APK" ] || { echo "nenhum APK gerado"; exit 1; }
-          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
-          sha256sum "$APK" > SHA256SUMS.txt && cat SHA256SUMS.txt
-          for entry in "lib/arm64-v8a/libtermux-bootstrap.so" "lib/arm64-v8a/libtermux.so"; do
-            unzip -l "$APK" | grep -q "$entry" || { echo "ERRO: $entry não entrou no APK"; exit 1; }
+          APKS=$(find app/build/outputs/apk -name '*.apk')
+          [ -n "$APKS" ] || { echo "nenhum APK gerado"; exit 1; }
+          echo "$APKS" | wc -l | xargs echo "APKs gerados:"
+          for APK in $APKS; do
+            echo
+            echo "== $(basename "$APK") ($(du -h "$APK" | cut -f1))"
+            ABI=$(unzip -l "$APK" | sed -n 's|.*lib/\([^/]*\)/libtermux-bootstrap\.so|\1|p' | head -1)
+            [ -n "$ABI" ] || { echo "ERRO: nenhum libtermux-bootstrap.so em $APK"; exit 1; }
+            # 1. só pode existir a ABI daquele APK (senão o split não funcionou)
+            COUNT=$(unzip -l "$APK" | grep -c "lib/.*\.so" || true)
+            echo "   abi=$ABI  bibliotecas=$COUNT"
+            for lib in libtermux-bootstrap.so libtermux.so; do
+              unzip -l "$APK" | grep -q "lib/$ABI/$lib" || { echo "ERRO: falta $lib"; exit 1; }
+            done
+            # 2. a ABI da pasta tem de ser a única no pacote
+            #    (sem pipe: `exit` dentro de um `while` em pipeline roda em subshell e não
+            #     falha o script — foi assim que um check meu passou batido antes)
+            ABIS_IN_APK=$(unzip -l "$APK" | grep -o "lib/[^/]*/" | sort -u | sed 's|^lib/||; s|/$||')
+            for other in $ABIS_IN_APK; do
+              if [ -n "$other" ] && [ "$other" != "$ABI" ]; then
+                echo "ERRO: $APK contém $other além de $ABI"
+                exit 1
+              fi
+            done
+            # 3. o editor tem de estar dentro
+            unzip -l "$APK" | grep -q "assets/www/index.html" || {
+              echo "ERRO: bundle do editor não entrou em $APK"; exit 1; }
+            unzip -p "$APK" "lib/$ABI/libtermux-bootstrap.so" > /tmp/boot.zip
+            python3 - "$ABI" <<'PY'
+          import sys, zipfile
+          z = zipfile.ZipFile("/tmp/boot.zip")
+          data = z.read("bin/bash")
+          assert data[:4] == b"\x7fELF", "bin/bash não é ELF"
+          assert b"/data/data/io.rea.ide/files/usr" in data, "prefixo não reescrito"
+          print(f"   {sys.argv[1]}: bootstrap ok ({len(z.namelist())} entradas)")
+          PY
           done
-          unzip -l "$APK" | grep -q "assets/www/index.html" || {
-            echo "ERRO: bundle do editor não entrou no APK"; exit 1; }
+          sha256sum $APKS > SHA256SUMS.txt && cat SHA256SUMS.txt
 
     artifacts:
-      - app/build/outputs/apk/**/*.apk
+      - app/build/outputs/**/*.apk
       - SHA256SUMS.txt
 
     publishing:

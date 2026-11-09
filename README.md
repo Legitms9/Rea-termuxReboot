@@ -38,7 +38,15 @@ curl -fsSL https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/652
 | Azure Pipelines | [`azure-pipelines.yml`](azure-pipelines.yml) | 1.800 min/mês |
 | GitHub Actions (quando religar) | [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) | 2.000 min/mês |
 
-Depois: `adb install -r rea-termux-ide-0.1.0-debug-arm64-v8a.apk`.
+Depois, escolha o APK da arquitetura do aparelho:
+
+```sh
+adb shell getprop ro.product.cpu.abi     # arm64-v8a  ou  armeabi-v7a
+adb install -r rea-termux-ide-0.1.0-debug-arm64-v8a.apk   # 64 bits
+adb install -r rea-termux-ide-0.1.0-debug-armeabi-v7a.apk # 32 bits
+```
+
+O CI gera um APK por ABI (~50 MB cada) — o de 32 bits não baixa o de 64 e vice-versa.
 
 Não há APK commitado neste repositório — ele é sempre gerado por um runner.
 

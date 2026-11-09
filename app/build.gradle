@@ -22,8 +22,15 @@ android {
         versionCode 1
         versionName "0.1.0"
 
-        ndk {
-            abiFilters(*reaAbis)
+        // One APK per ABI: a 32-bit phone then downloads ~50 MB instead of a ~100 MB
+        // universal APK, and there is no way to install the wrong architecture.
+        splits {
+            abi {
+                enable true
+                reset()
+                include(*reaAbis)
+                universalApk false
+            }
         }
     }
 

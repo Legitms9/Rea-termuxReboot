@@ -111,6 +111,36 @@ https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/65202ee3-rea-t
 
 A linha 16 tem de ser `instance_type: linux` (sem `_x2`).
 
+### Arquitetura (ABI): 32 bits vs 64 bits
+
+O workflow gera **um APK por ABI** (`splits { abi { ... } }`), não um APK universal:
+
+| Aparelho | APK | Tamanho aprox. |
+|---|---|---|
+| arm64 (2017+) | `...-arm64-v8a.apk` | ~50 MB |
+| arm 32 bits (antigos, TVs, alguns tablets) | `...-armeabi-v7a.apk` | ~48 MB |
+
+Antes de instalar, descubra a ABI do aparelho:
+
+```sh
+adb shell getprop ro.product.cpu.abi          # arm64-v8a  ou  armeabi-v7a
+```
+
+Sem `adb`? Instale qualquer app "CPU-Z"/"Device Info" — campo *ABI / Instruction Sets*.
+Ou simplesmente tente: Android recusa com `INSTALL_FAILED_NO_MATCHING_ABIS` se for o pacote
+errado, e nada quebra.
+
+Se quiser um único APK universal (instala em qualquer aparelho, ~98 MB):
+
+```yaml
+# codemagic.yaml → environment → vars
+ABIS: arm64-v8a,armeabi-v7a,x86,x86_64
+```
+e no `app/build.gradle`, troque `universalApk false` por `universalApk true`.
+
+O passo 9 do CI garante que cada APK contém **só** a sua ABI: se um build sair com duas
+arquiteturas no mesmo pacote, ele falha antes do download.
+
 ### Erros de schema do codemagic.yaml (já corrigidos)
 
 O schema da Codemagic usa `additionalProperties: false`, então chave no lugar errado não gera
