@@ -86,6 +86,23 @@ Codemagic → app → Start new build
 
 Ou, se preferir que o build de `main` funcione já: mergeie o PR #1.
 
+### Erros de schema do codemagic.yaml (já corrigidos)
+
+O schema da Codemagic usa `additionalProperties: false`, então chave no lugar errado não gera
+aviso: o build nem começa. As regras que pegamos:
+
+| Erro | Regra |
+|---|---|
+| `environment -> cache: extra fields not permitted` | `cache:` é **nível do workflow**, não dentro de `environment` |
+| `environment -> python: extra fields not permitted` | `python` não existe no schema; a imagem Ubuntu já traz `python3` |
+| `instance_type: linux_x2` | exige billing; conta grátis usa `linux` (ou `mac_mini_m2`) |
+
+Valide antes de clicar em *Start build*:
+
+```sh
+python3 scripts/check_codemagic.py        # 0 = ok, 1 = lista o que está errado
+```
+
 O que o workflow faz (9 passos): diagnóstico do ambiente → invariante do app id → testes do
 patcher → editor web + testes → download/verificação do bootstrap → **validação do prefixo dentro
 de `bin/bash`** → SDK/NDK → `assembleDebug` → conferência do conteúdo do APK (`libtermux*.so` e
