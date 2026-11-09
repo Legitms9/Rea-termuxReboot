@@ -18,6 +18,7 @@ __pycache__/
 # OS
 .DS_Store
 
-# REA agent install (local only)
-node_modules/
-package-lock.json
+# REA agent install (local only). These live at the repo root, not in web/:
+# web/package-lock.json IS tracked (CI needs it for `npm ci`).
+/node_modules/
+/package-lock.json
