@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/rea_terminal_bg">
+
+    <!-- Session tabs + actions -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="34dp"
+        android:background="@color/rea_bg_panel"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/session_tabs"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp" />
+    </HorizontalScrollView>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <com.termux.view.TerminalView
+            android:id="@+id/terminal_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- build/run console: no pty, merged stdout/stderr, ANSI stripped -->
+        <ScrollView
+            android:id="@+id/console_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/rea_terminal_bg"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/console_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:textColor="@color/rea_text"
+                android:textIsSelectable="true"
+                android:padding="10dp" />
+        </ScrollView>
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/rea_bg_panel"
+        android:padding="2dp">
+
+        <TextView
+            android:id="@+id/term_btn_ctrl"
+            style="@style/Rea.Key"
+            android:text="CTRL" />
+
+        <TextView
+            android:id="@+id/term_btn_alt"
+            style="@style/Rea.Key"
+            android:text="ALT" />
+
+        <TextView
+            android:id="@+id/term_btn_tab"
+            style="@style/Rea.Key"
+            android:text="TAB" />
+
+        <TextView
+            android:id="@+id/term_btn_esc"
+            style="@style/Rea.Key"
+            android:text="ESC" />
+
+        <TextView
+            android:id="@+id/term_btn_up"
+            style="@style/Rea.Key"
+            android:text="↑" />
+
+        <TextView
+            android:id="@+id/term_btn_down"
+            style="@style/Rea.Key"
+            android:text="↓" />
+
+        <TextView
+            android:id="@+id/term_btn_new"
+            style="@style/Rea.Key"
+            android:text="+ Shell" />
+
+        <TextView
+            android:id="@+id/term_btn_console"
+            style="@style/Rea.Key"
+            android:text="⌗ Build" />
+
+        <TextView
+            android:id="@+id/term_btn_keyboard"
+            style="@style/Rea.Key"
+            android:text="⌨" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+    id 'com.android.library' version '8.5.2' apply false
+}
+
+ext {
+    reaCompileSdk = project.findProperty('rea.compileSdk')?.toInteger() ?: 34
+    reaTargetSdk = project.findProperty('rea.targetSdk')?.toInteger() ?: 34
+    reaMinSdk = project.findProperty('rea.minSdk')?.toInteger() ?: 24
+    reaNdkVersion = project.findProperty('rea.ndkVersion') ?: '26.1.10909125'
+    reaAppId = project.findProperty('rea.applicationId') ?: 'io.rea.ide'
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}

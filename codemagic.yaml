@@ -1,0 +1,291 @@
+# rea-config-version: 3   <- se a Codemagic mostrar outro número, ela está com cópia velha
+#
+# Codemagic — CI Android grátis (500 min/mês) que builda direto do GitHub,
+# sem depender do GitHub Actions.
+#
+# IMPORTANTE: este arquivo precisa existir na branch que você manda buildar. Ele está na
+# branch do PR (arena/65202ee3-rea-termuxreboot) e vai para a main quando o PR #1 for mergeado.
+#
+# Schema: https://codemagic.io/codemagic-schema.json
+#   - `cache:` fica no NÍVEL DO WORKFLOW (não dentro de environment)
+#   - environment não aceita `python:` (a imagem Ubuntu já traz python3)
+#   - PLANO GRÁTIS = SÓ macOS. `linux`, `linux_x2`, `linux_x4` e `windows_x2` exigem billing
+#     ("The selected instance type is not available with the current billing plan").
+#     Portanto: instance_type: mac_mini_m2 — build Android roda normal nele.
+# scripts/check_codemagic.py valida essas regras antes de você clicar em "Start build".
+
+workflows:
+  android-apk:
+    name: REA IDE APK (arm64 + arm32)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      groups: []
+      vars:
+        REA_APP_ID: io.rea.ide
+        BOOTSTRAP_RELEASE: "bootstrap-2026.11.08-r1+apt.android-7"
+        ABIS: arm64-v8a,armeabi-v7a
+        GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g"
+      java: 17
+      node: 20
+      ndk: 26.1.10909125
+    cache:
+      cache_paths:
+        - $CM_BUILD_DIR/.cache/bootstrap
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    triggering:
+      events: [push]
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: 'arena/*'
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - name: Validar este arquivo (impede runner que a conta não tem)
+        script: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          # Plano grátis = apenas macOS. Este check falha ANTES de gastar build.
+          FREE = {"mac_mini", "mac_mini_m2"}
+          text = pathlib.Path("codemagic.yaml").read_text()
+          bad = [m.group(1) for m in re.finditer(r"^\s*instance_type:\s*(\S+)", text, re.M)
+                 if m.group(1) not in FREE]
+          if bad:
+              print(f"ERRO: instance_type {bad} exige billing; use um de {sorted(FREE)}")
+              sys.exit(1)
+          print("instance_type ok para plano grátis")
+          PY
+
+      - name: Ambiente (diagnóstico)
+        script: |
+          echo "branch: $CM_BRANCH  commit: $CM_COMMIT"
+          echo "JAVA_HOME=${JAVA_HOME:-<vazio>}"
+          java -version 2>&1 | head -2
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-<vazio>}"
+          echo "uname: $(uname -s)"
+          node --version
+          python3 --version
+          # macOS não tem sha256sum; define o comando disponível para os passos seguintes
+          if command -v sha256sum > /dev/null 2>&1; then
+            echo "SHA256_CMD=sha256sum" >> "$CM_ENV"
+          else
+            echo "SHA256_CMD='shasum -a 256'" >> "$CM_ENV"
+          fi
+          echo "sha256 via: $([ -n "$(command -v sha256sum)" ] && echo sha256sum || echo shasum)"
+
+      - name: invariante do applicationId
+        script: python3 scripts/patch_bootstrap.py --check --app-id "$REA_APP_ID"
+
+      - name: testes do patcher (sem rede)
+        script: |
+          python3 scripts/test_prepare_bootstrap.py && python3 scripts/tests/test_bootstrap_download.py
+
+      # Erro de compilação Java (R.id inexistente, método com nome errado, interface
+      # incompleta) só apareceria no fim, depois de ~1h de fila. Este passo é barato.
+      - name: fontes Android (recursos, manifest, chamadas, interfaces)
+        script: |
+          # javalang só é usado para ler Java offline; se não instalar, o script avisa
+          python3 -m pip install --quiet --disable-pip-version-check javalang \
+            || python3 -m pip install --quiet --disable-pip-version-check --break-system-packages javalang \
+            || echo "AVISO: javalang nao instalado, checagens de Java serao puladas"
+          python3 scripts/tests/test_android_sources.py
+          python3 scripts/check_android_sources.py
+
+      - name: editor web + testes
+        script: |
+          node --version || { echo "node ausente"; exit 1; }
+          cd web
+          npm ci --no-audit --no-fund
+          npm run build
+          npm test
+
+      - name: bootstrap do Termux (prefixo reescrito, sha256 verificado)
+        script: |
+          # Se gh nao estiver autenticado, prepare_bootstrap.py usa HTTP puro.
+          # Três saídas se o download falhar (o passo seguinte valida o resultado de qualquer forma):
+          #   1. REA_BOOTSTRAP_PROXY=https://ghproxy.net
+          #   2. REA_BOOTSTRAP_MIRROR=https://seu-servidor/bootstraps
+          #   3. commit do próprio zip em cache/ e --source-dir cache/ (não recomendado: 40 MB no repo)
+          python3 scripts/prepare_bootstrap.py \
+            --release "$BOOTSTRAP_RELEASE" \
+            --app-id "$REA_APP_ID" \
+            --abis "$ABIS" \
+            --out-dir app/src/main/jniLibs \
+            --cache-dir "$CM_BUILD_DIR/.cache/bootstrap"
+
+      - name: validar o bootstrap (falha aqui, não no celular)
+        script: |
+          python3 - <<'PY'
+          import json, os, pathlib, zipfile
+          for abi in os.environ.get("ABIS", "arm64-v8a").split(","):
+              p = pathlib.Path(f"app/src/main/jniLibs/{abi}/libtermux-bootstrap.so")
+              assert p.exists(), f"bootstrap ausente para {abi}"
+              z = zipfile.ZipFile(p)
+              names = z.namelist()
+              data = z.read("bin/bash")
+              m = json.loads(z.read("REA-INSTALL-MANIFEST.json"))
+              assert data[:4] == b"\x7fELF", "bin/bash não é ELF"
+              assert b"/data/data/io.rea.ide/files/usr" in data, "prefixo não reescrito"
+              assert b"/data/data/com.termux" not in data, "sobrou prefixo canônico"
+              assert "SYMLINKS.txt" in names and m["symlinks"], "sem symlinks (bin/sh sumiria)"
+              print(f"{abi}: ok — {len(names)} entradas, {len(m['executables'])} executáveis, "
+                    f"{len(m['symlinks'])} symlinks, {p.stat().st_size/1e6:.1f} MB")
+          PY
+
+      - name: Android SDK / NDK
+        script: |
+          # Descobre o SDK independente da plataforma (macOS nas máquinas grátis).
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
+          [ -d "$SDK" ] || SDK="$HOME/android-sdk"
+          mkdir -p "$SDK"
+          export ANDROID_SDK_ROOT="$SDK" ANDROID_HOME="$SDK"
+
+          find_sdkmanager() {
+            for c in "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+                     "$SDK/cmdline-tools/bin/sdkmanager" \
+                     "$SDK/tools/bin/sdkmanager"; do
+              [ -x "$c" ] && { echo "$c"; return 0; }
+            done
+            command -v sdkmanager 2>/dev/null || return 1
+          }
+          SDKMANAGER=$(find_sdkmanager || true)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager não encontrado; instalando cmdline-tools"
+            case "$(uname -s)" in
+              Darwin) CT=commandlinetools-mac-11076708_latest.zip ;;
+              *)      CT=commandlinetools-linux-11076708_latest.zip ;;
+            esac
+            curl -fsSL -o "$RUNNER_TEMP/cmdtools.zip" \
+              "https://dl.google.com/android/repository/$CT"
+            mkdir -p "$SDK/cmdline-tools"
+            unzip -q "$RUNNER_TEMP/cmdtools.zip" -d "$SDK/cmdline-tools"
+            mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+            SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          NEED=""
+          [ -d "$SDK/platforms/android-34" ] || NEED="$NEED platforms;android-34"
+          [ -d "$SDK/build-tools/34.0.0" ] || NEED="$NEED build-tools;34.0.0"
+          [ -d "$SDK/ndk/26.1.10909125" ] || NEED="$NEED ndk;26.1.10909125"
+          if [ -n "$NEED" ]; then
+            echo "instalando:$NEED"
+            "$SDKMANAGER" --install $NEED > /dev/null
+          fi
+
+          # SDK local do Gradle (e do CI): sem isso o Gradle reclama de SDK location
+          echo "sdk.dir=$SDK" > local.properties
+          echo "SDK=$SDK"; ls "$SDK/ndk" "$SDK/platforms" || true
+
+      - name: build APK
+        script: |
+          chmod +x gradlew || true
+          # Um APK por ABI (splits): arm64-v8a para celulares novos, armeabi-v7a para 32 bits.
+          # `bash ./gradlew` em vez de ./gradlew: imune a bit de execução perdido no checkout.
+          #
+          # `set -e` de propósito FORA: queremos o log filtrando a causa, e o exit no fim.
+          set +e
+          bash ./gradlew --no-daemon --stacktrace assembleDebug \
+            -Prea.bootstrapRelease="$BOOTSTRAP_RELEASE" \
+            -Prea.abis="$ABIS" \
+            -Prea.webPrefetched=true 2>&1 | tee "$CM_BUILD_DIR/gradle.log"
+          GRADLE_EXIT=${PIPESTATUS[0]}
+
+          if [ "$GRADLE_EXIT" -ne 0 ]; then
+            echo
+            echo "==================== CAUSA (What went wrong) ===================="
+            # A parede de `at org.gradle...` esconde o essencial: mostra só o que importa.
+            sed -n '/What went wrong/,/\* Try/p' "$CM_BUILD_DIR/gradle.log" | head -60
+            echo "================================================================"
+            echo
+            echo "------------------ primeiros erros do compilador ------------------"
+            grep -nE "^e: |error: |^[^ ]*\.java:[0-9]+: error|^[^ ]*\.c:[0-9]+:[0-9]+: error|undeclared|cannot find symbol" \
+              "$CM_BUILD_DIR/gradle.log" | head -40
+            echo "-----------------------------------------------------------------"
+            echo
+            echo "---------------------- ultimas 40 linhas -----------------------"
+            tail -40 "$CM_BUILD_DIR/gradle.log"
+            exit 1
+          fi
+          echo "assembleDebug ok"
+
+      - name: conferir cada APK (uma ABI por APK)
+        script: |
+          set -e
+          WORK="${TMPDIR:-${RUNNER_TEMP:-/tmp}}"
+          APKS=$(find app/build/outputs/apk -name '*.apk')
+          [ -n "$APKS" ] || { echo "nenhum APK gerado"; exit 1; }
+          echo "$APKS" | wc -l | xargs echo "APKs gerados:"
+          FOUND_ABIS=" "
+          for APK in $APKS; do
+            echo
+            echo "== $(basename "$APK") ($(du -h "$APK" | cut -f1))"
+            ABI=$(unzip -l "$APK" | sed -n 's|.*lib/\([^/]*\)/libtermux-bootstrap\.so|\1|p' | head -1)
+            [ -n "$ABI" ] || { echo "ERRO: nenhum libtermux-bootstrap.so em $APK"; exit 1; }
+            # 1. só pode existir a ABI daquele APK (senão o split não funcionou)
+            COUNT=$(unzip -l "$APK" | grep -c "lib/.*\.so" || true)
+            echo "   abi=$ABI  bibliotecas=$COUNT"
+            FOUND_ABIS="$FOUND_ABIS$ABI "
+            for lib in libtermux-bootstrap.so libtermux.so; do
+              unzip -l "$APK" | grep -q "lib/$ABI/$lib" || { echo "ERRO: falta $lib"; exit 1; }
+            done
+            # 2. a ABI da pasta tem de ser a única no pacote
+            #    (sem pipe: `exit` dentro de um `while` em pipeline roda em subshell e não
+            #     falha o script — foi assim que um check meu passou batido antes)
+            ABIS_IN_APK=$(unzip -l "$APK" | grep -o "lib/[^/]*/" | sort -u | sed 's|^lib/||; s|/$||')
+            for other in $ABIS_IN_APK; do
+              if [ -n "$other" ] && [ "$other" != "$ABI" ]; then
+                echo "ERRO: $APK contém $other além de $ABI"
+                exit 1
+              fi
+            done
+            # 3. o editor tem de estar dentro
+            unzip -l "$APK" | grep -q "assets/www/index.html" || {
+              echo "ERRO: bundle do editor não entrou em $APK"; exit 1; }
+            unzip -p "$APK" "lib/$ABI/libtermux-bootstrap.so" > "$WORK/boot.zip"
+            python3 - "$ABI" <<'PY'
+          import sys, zipfile
+          import os
+          work = os.environ.get("TMPDIR") or os.environ.get("RUNNER_TEMP") or "/tmp"
+          z = zipfile.ZipFile(os.path.join(work, "boot.zip"))
+          data = z.read("bin/bash")
+          assert data[:4] == b"\x7fELF", "bin/bash não é ELF"
+          assert b"/data/data/io.rea.ide/files/usr" in data, "prefixo não reescrito"
+          print(f"   {sys.argv[1]}: bootstrap ok ({len(z.namelist())} entradas)")
+          PY
+          done
+          # Nao basta validar os APKs existentes: cada ABI solicitada deve estar presente.
+          for expected in $(echo "${ABIS:?ABIS nao definida}" | tr ',' ' '); do
+            case "$FOUND_ABIS" in
+              *" $expected "*) echo "ABI solicitada encontrada: $expected" ;;
+              *) echo "ERRO: nenhum APK para ABI solicitada: $expected"; exit 1 ;;
+            esac
+          done
+          # macOS não tem sha256sum
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum $APKS > SHA256SUMS.txt
+          else
+            shasum -a 256 $APKS > SHA256SUMS.txt
+          fi
+          cat SHA256SUMS.txt
+
+    artifacts:
+      - app/build/outputs/**/*.apk
+      - SHA256SUMS.txt
+
+    publishing:
+      # Notificação por e-mail é opcional: crie o grupo "email" em Codemagic → Teams →
+      # Environment variables com CM_EMAIL_RECIPIENT e descomente.
+      # email:
+      #   recipients: [${CM_EMAIL_RECIPIENT}]
+      #   notify:
+      #     success: true
+      #     failure: true
+      scripts:
+        - name: resumo
+          script: echo "APK disponível em Artifacts (30 dias)."

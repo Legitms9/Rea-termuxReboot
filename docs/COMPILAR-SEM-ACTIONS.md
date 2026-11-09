@@ -1,0 +1,282 @@
+# Compilar o APK sem o GitHub Actions
+
+O Actions está desabilitado na conta, então nada é compilado no `github.com`. Todas as opções
+abaixo usam **máquina de outra pessoa** — nenhuma compila no seu celular ou PC.
+
+Escolha uma. Todas partem do mesmo repo e do mesmo `scripts/build_cloudshell.sh` (que é a
+sequência: testes → web → bootstrap → gradle). O que muda é só "quem aperta o botão".
+
+| # | Opção | Esforço | Custo | Automático a cada push? | Onde pega o APK |
+|---|---|---|---|---|---|
+| 1 | **Google Cloud Shell** (script) | 2 min | grátis | ❌ (manual) | `~/rea-apk/*.apk` → download |
+| 2 | **GitLab CI** (espelho do repo) | 15 min, uma vez | 400 min/mês grátis | ✅ | artefato do pipeline |
+| 3 | **Codemagic** (conecta no GitHub) | 5 min, uma vez | 500 min/mês grátis | ✅ | artifacts do build |
+| 4 | **Azure Pipelines** | 10 min, uma vez | 1.800 min/mês grátis (repo público) | ✅ | artifact do build |
+| 5 | **Codespaces / Gitpod** | 2 min | 60 h / 50 h por mês | ❌ | download do arquivo |
+| 6 | **Docker** em qualquer máquina | 5 min | o da máquina | ❌ | `out/*.apk` |
+
+> Não recomendo "compilar no Termux do próprio celular": exige ~10 GB, JDK + SDK + NDK, e leva
+> 20–40 min em um aparelho de 8 GB. Funciona (`bash scripts/build_cloudshell.sh` dentro do
+> Termux), mas é a pior experiência — e é justamente o que você pediu para evitar.
+
+---
+
+## 1. Google Cloud Shell — o mais rápido, zero configuração
+
+<https://shell.cloud.google.com> (precisa de conta Google; VM Linux efêmera, grátis, 5 GB).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/65202ee3-rea-termuxreboot/scripts/build_cloudshell.sh | bash
+```
+
+Em ~10 min (download do bootstrap + Gradle) ele imprime:
+
+```
+APK pronto
+  arquivo : ~/rea-apk/rea-termux-ide-0.1.0-debug-arm64-v8a.apk
+  tamanho : ~55M
+  sha256  : ...
+```
+
+Baixe com **⋮ → Download** informando o caminho, ou:
+
+```sh
+cd ~/rea-apk && python3 -m http.server 8000     # depois: Web preview → porta 8000
+```
+
+Cuidado: a sessão do Cloud Shell expira (~20 min ociosa). Se cair, rode de novo — o cache do
+bootstrap fica em `build/bootstrap-cache` dentro do clone temporário, que também se perde.
+
+## 2. GitLab CI — build automático a cada push, de graça
+
+O `.gitlab-ci.yml` já está no repo. Dois caminhos:
+
+**a) Espelho (recomendado: você continua no GitHub)**
+
+1. gitlab.com → *New project* → *Import project* → **GitHub** → autorize → escolha
+   `Legitms9/Rea-termuxReboot`.
+2. No projeto importado: *Settings → Repository → Mirroring repositories* → **Pull**,
+   URL `https://github.com/Legitms9/Rea-termuxReboot.git`, a cada 1 hora.
+3. *Build → Pipelines → Run pipeline* na branch. O job `build:apk` gera
+   `out/rea-termux-ide-*.apk` em *Browse artifacts*.
+
+**b) Push direto para o GitLab** (um remote a mais):
+
+```sh
+git remote add gitlab git@gitlab.com:SEU_USUARIO/Rea-termuxReboot.git
+git push gitlab arena/65202ee3-rea-termuxreboot
+```
+
+Runners: use os compartilhados do gitlab.com (padrão). A imagem `ghcr.io/cirruslabs/android-sdk:34`
+já traz SDK 34 + NDK, então o job é curto.
+
+## 3. Codemagic — já conectado ✔
+
+App: [`codemagic.io/app/6af11769a4abdfa900b420cb`](https://codemagic.io/app/6af11769a4abdfa900b420cb/settings)
+
+O `codemagic.yaml` está na branch `arena/65202ee3-rea-termuxreboot` (vai para a `main` no merge
+do PR #1). Então, no **primeiro** build, escolha essa branch explicitamente — senão a Codemagic
+não acha a configuração:
+
+```
+Codemagic → app → Start new build
+  ├─ Branch: arena/65202ee3-rea-termuxreboot     ← não deixe "main"
+  └─ Workflow: android-apk
+```
+
+Ou, se preferir que o build de `main` funcione já: mergeie o PR #1.
+
+### "Corrigi e a Codemagic mostra o mesmo erro"
+
+O app da Codemagic às vezes mantém em cache o `codemagic.yaml` do primeiro *check*. Como saber se
+é isso: a primeira linha do arquivo é um marcador de versão.
+
+```
+# rea-config-version: 3
+```
+
+- mostra **3** → é o arquivo atual, o erro é real;
+- mostra **1 ou 2** (ou nada) → é cópia velha. Force a releitura:
+
+1. toque no **↻** ao lado de *"Check for configuration files"*;
+2. se não atualizar: **Settings → Build configuration** → desligue `codemagic.yaml` e ligue de novo;
+3. pior caso: **Start new build** direto (o build clona o repo na hora e usa a versão correta —
+   a validação do editor é só uma pré-checagem).
+
+Você pode conferir o que está no GitHub sem sair do navegador:
+
+```
+https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/65202ee3-rea-termuxreboot/codemagic.yaml
+```
+
+A linha 16 tem de ser `instance_type: linux` (sem `_x2`).
+
+### Plano grátis da Codemagic = só macOS
+
+`The selected instance type is not available with the current billing plan` significa: o runner
+pedido **não existe no plano grátis**. No plano gratuito só há máquinas **macOS**; `linux`,
+`linux_x2`, `linux_x4` e `windows_x2` exigem billing.
+
+O workflow usa `instance_type: mac_mini_m2`. Build Android funciona normal no macOS, com duas
+consequências que já estão tratadas no arquivo:
+
+| Item | Por quê |
+|---|---|
+| `sha256sum` → `shasum -a 256` | macOS não tem `sha256sum` |
+| `$RUNNER_TEMP`/`$TMPDIR` em vez de `/tmp` fixo | mesmo motivo, e segue o padrão do CI |
+| `sdkmanager` procurado em vários caminhos + `commandlinetools-mac` | a imagem macOS já traz SDK, mas o caminho varia |
+
+Fila: builds grátis em macOS podem esperar **30–60 min** antes de começar (não é erro). O build em
+si leva ~10 min. Se isso incomodar, a alternativa que não tem fila é o **Google Cloud Shell**
+(seção 1) — 10 min do início ao APK.
+
+### Arquitetura (ABI): 32 bits vs 64 bits
+
+O workflow gera **um APK por ABI** (`splits { abi { ... } }`), não um APK universal:
+
+| Aparelho | APK | Tamanho aprox. |
+|---|---|---|
+| arm64 (2017+) | `...-arm64-v8a.apk` | ~50 MB |
+| arm 32 bits (antigos, TVs, alguns tablets) | `...-armeabi-v7a.apk` | ~48 MB |
+
+Antes de instalar, descubra a ABI do aparelho:
+
+```sh
+adb shell getprop ro.product.cpu.abi          # arm64-v8a  ou  armeabi-v7a
+```
+
+Sem `adb`? Instale qualquer app "CPU-Z"/"Device Info" — campo *ABI / Instruction Sets*.
+Ou simplesmente tente: Android recusa com `INSTALL_FAILED_NO_MATCHING_ABIS` se for o pacote
+errado, e nada quebra.
+
+Se quiser um único APK universal (instala em qualquer aparelho, ~98 MB):
+
+```yaml
+# codemagic.yaml → environment → vars
+ABIS: arm64-v8a,armeabi-v7a,x86,x86_64
+```
+e no `app/build.gradle`, troque `universalApk false` por `universalApk true`.
+
+O passo 9 do CI garante que cada APK contém **só** a sua ABI: se um build sair com duas
+arquiteturas no mesmo pacote, ele falha antes do download.
+
+### Erros de schema do codemagic.yaml (já corrigidos)
+
+O schema da Codemagic usa `additionalProperties: false`, então chave no lugar errado não gera
+aviso: o build nem começa. As regras que pegamos:
+
+| Erro | Regra |
+|---|---|
+| `environment -> cache: extra fields not permitted` | `cache:` é **nível do workflow**, não dentro de `environment` |
+| `environment -> python: extra fields not permitted` | `python` não existe no schema; a imagem Ubuntu já traz `python3` |
+| `instance_type: linux` / `linux_x2` | exige billing; **plano grátis é só macOS**, use `mac_mini_m2` |
+
+Valide antes de clicar em *Start build*:
+
+```sh
+python3 scripts/check_codemagic.py        # 0 = ok, 1 = lista o que está errado
+```
+
+Antes de gastar tempo de fila, valide também o **código** (não precisa de JDK nem SDK):
+
+```sh
+python3 scripts/check_android_sources.py  # R.* inexistente, findViewById órfão,
+                                          # método com nome errado, interface incompleta,
+                                          # activity sem classe, applicationId, sintaxe Java
+python3 scripts/tests/test_android_sources.py   # 13 casos que provam que o checador acusa
+```
+
+O que o workflow faz (11 passos): diagnóstico do ambiente → invariante do app id → testes do
+patcher → **checagem das fontes Android** → editor web + testes → download/verificação do bootstrap → **validação do prefixo dentro
+de `bin/bash`** → SDK/NDK → `assembleDebug` → conferência do conteúdo do APK (`libtermux*.so` e
+`assets/www/index.html` presentes) → artefato + `SHA256SUMS.txt`.
+
+Se algo falhar, o passo onde parou já diz o que é. Os três erros mais prováveis na primeira vez:
+
+| Passo que falha | Causa | O que fazer |
+|---|---|---|
+| `bootstrap do Termux` | Codemagic sem `gh` e download do GitHub bloqueado | adicione a variável `REA_BOOTSTRAP_PROXY` = `https://ghproxy.net` em *Environment variables* |
+| `Android SDK / NDK` | imagem sem NDK 26.1 | o passo instala; se falhar, troque `instance_type` para `mac_mini_m2` (também tem free tier) |
+| `build APK` | erro de compilação Java/C | me manda o trecho — é a primeira compilação real do projeto |
+
+### Configurações recomendadas em *Settings*
+
+- **Build triggers**: já vêm do `triggering:` do YAML (push em `main` e `arena/*`).
+- **Environment variables**: nenhuma obrigatória. Opcionais: `REA_BOOTSTRAP_PROXY`,
+  `CM_EMAIL_RECIPIENT` (para notificação por e-mail).
+- **Code signing (Android)**: **não é necessário** para o APK debug. Só configure se quiser
+  release assinado; nesse caso, o `app/build.gradle` já aceita
+  `REA_KEYSTORE_FILE`/`REA_KEYSTORE_PASSWORD`/`REA_KEY_ALIAS`/`REA_KEY_PASSWORD`.
+- **Dependency caching**: ligado pelo `cache:` do YAML (bootstrap + Gradle), o build repetido cai
+  de ~10 min para ~3 min.
+
+### Disparar pela API (opcional)
+
+```sh
+curl -s -X POST https://api.codemagic.io/builds \
+  -H "x-auth-token: $CODEMAGIC_TOKEN" -H "Content-Type: application/json" \
+  -d '{"appId":"6af11769a4abdfa900b420cb","workflowId":"android-apk",
+       "branch":"arena/65202ee3-rea-termuxreboot"}'
+```
+
+### Antigo caminho de 5 minutos (para referência)
+
+O APK sai em **Artifacts** com link público (30 dias).
+
+## 4. Azure Pipelines
+
+dev.azure.com → *New project* → *Pipelines → New pipeline* → GitHub →
+`Legitms9/Rea-termuxReboot` → *Existing Azure Pipelines YAML file* → `/azure-pipelines.yml` →
+Run. O APK aparece em *Artifacts* (`rea-ide-apk`). Grátis para repo público, sem cartão.
+
+## 5. Codespaces / Gitpod
+
+**Codespaces**: github.com/codespaces → *New codespace* neste repo → no terminal:
+
+```sh
+bash scripts/build_cloudshell.sh
+```
+
+Depois, no explorador de arquivos do VS Code web: botão direito em
+`~/rea-apk/*.apk` → *Download*.
+
+**Gitpod**: `https://gitpod.io/#https://github.com/Legitms9/Rea-termuxReboot` e o mesmo comando.
+
+## 6. Docker em qualquer máquina com internet
+
+```sh
+docker build -f docker/Dockerfile -t rea-ide-build .
+mkdir -p out
+docker run --rm -v "$PWD/out:/out" -v "$PWD:/src" -w /src \
+  -e GH_TOKEN="$(gh auth token)" rea-ide-build
+ls out/*.apk
+```
+
+Não precisa de Android SDK nem JDK na máquina — só Docker. Funciona em qualquer VPS, no WSL, num
+servidor de amigo. Se não tiver `gh`, o script cai para download HTTP puro
+(`REA_BOOTSTRAP_PROXY` opcional).
+
+---
+
+## Antes de culpar o build: o que já está verde
+
+O que dá para verificar sem compilar nada:
+
+```sh
+python3 scripts/patch_bootstrap.py --check      # invariante do applicationId
+python3 scripts/test_prepare_bootstrap.py       # 30 asserções do patcher
+cd web && npm ci && npm run build && npm test   # editor em DOM real + filtro ANSI
+```
+
+## Problemas prováveis no primeiro build real
+
+| Sintoma | Causa | Correção |
+|---|---|---|
+| `Bootstrap ausente para [...]` | rodou `gradlew` sem o passo do bootstrap | rode `scripts/prepare_bootstrap.py` antes (ou use o `build_cloudshell.sh`) |
+| `Could not find com.android.tools.build:gradle` | sem internet para `google()`/`mavenCentral()` | libere `dl.google.com`, `repo1.maven.org` |
+| `NDK not configured` | SDK sem NDK 26.1 | `sdkmanager "ndk;26.1.10909125"` |
+| `Asset 'www/index.html' não encontrado` → tela branca | build sem o passo web | `-Prea.webPrefetched=true` só se `web/dist` existir |
+| APK instala e fecha ao abrir | bootstrap corrompido/ABI errada | confira a ABI do aparelho (`adb shell getprop ro.product.cpu.abi`) |
+| `gh: command not found` | CI sem GitHub CLI | já tem fallback HTTP; ou `REA_BOOTSTRAP_PROXY=https://ghproxy.net` |
+
+Manda o log da primeira falha que eu ajusto — as linhas de cima cobrem os casos que já vi.
