@@ -169,7 +169,7 @@ aviso: o build nem começa. As regras que pegamos:
 |---|---|
 | `environment -> cache: extra fields not permitted` | `cache:` é **nível do workflow**, não dentro de `environment` |
 | `environment -> python: extra fields not permitted` | `python` não existe no schema; a imagem Ubuntu já traz `python3` |
-| `instance_type: linux_x2` | exige billing; conta grátis usa `linux` (ou `mac_mini_m2`) |
+| `instance_type: linux` / `linux_x2` | exige billing; **plano grátis é só macOS**, use `mac_mini_m2` |
 
 Valide antes de clicar em *Start build*:
 
@@ -177,8 +177,17 @@ Valide antes de clicar em *Start build*:
 python3 scripts/check_codemagic.py        # 0 = ok, 1 = lista o que está errado
 ```
 
-O que o workflow faz (9 passos): diagnóstico do ambiente → invariante do app id → testes do
-patcher → editor web + testes → download/verificação do bootstrap → **validação do prefixo dentro
+Antes de gastar tempo de fila, valide também o **código** (não precisa de JDK nem SDK):
+
+```sh
+python3 scripts/check_android_sources.py  # R.* inexistente, findViewById órfão,
+                                          # método com nome errado, interface incompleta,
+                                          # activity sem classe, applicationId, sintaxe Java
+python3 scripts/tests/test_android_sources.py   # 13 casos que provam que o checador acusa
+```
+
+O que o workflow faz (11 passos): diagnóstico do ambiente → invariante do app id → testes do
+patcher → **checagem das fontes Android** → editor web + testes → download/verificação do bootstrap → **validação do prefixo dentro
 de `bin/bash`** → SDK/NDK → `assembleDebug` → conferência do conteúdo do APK (`libtermux*.so` e
 `assets/www/index.html` presentes) → artefato + `SHA256SUMS.txt`.
 
