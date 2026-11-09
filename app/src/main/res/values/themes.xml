@@ -21,7 +21,9 @@
         <item name="android:textSize">11sp</item>
     </style>
 
-    <style name="Rea.ToolbarButton">
+    <!-- parent="" é obrigatório aqui: sem ele o Android assume pai "Rea" (herança
+         implícita pelo ponto no nome) e o AAPT2 falha com "style/Rea not found". -->
+    <style name="Rea.ToolbarButton" parent="">
         <item name="android:background">@drawable/bg_toolbar_button</item>
         <item name="android:textColor">@color/rea_text</item>
         <item name="android:textSize">12sp</item>

@@ -245,6 +245,58 @@ class AndroidSourceChecks(unittest.TestCase):
         errors = self.project.check()
         self.assertTrue(any("compileSdk" in e for e in errors), errors)
 
+    def test_estilo_sem_parent_herda_pai_inexistente(self) -> None:
+        """O erro real do CI: <style name="Rea.X"> sem parent herda de "Rea"."""
+        self.project.write("app/src/main/res/values/themes.xml", """\
+            <?xml version="1.0" encoding="utf-8"?>
+            <resources>
+                <style name="Theme.X" parent="android:Theme.Material" />
+                <style name="Rea.ToolbarButton">
+                    <item name="android:textSize">12sp</item>
+                </style>
+            </resources>
+        """)
+        errors = self.project.check()
+        self.assertTrue(any('style/Rea not found' in e for e in errors), errors)
+
+    def test_estilo_com_parent_vazio_passa(self) -> None:
+        """parent="" desliga a herança implícita: é a correção usada no projeto."""
+        self.project.write("app/src/main/res/values/themes.xml", """\
+            <?xml version="1.0" encoding="utf-8"?>
+            <resources>
+                <style name="Theme.X" parent="android:Theme.Material" />
+                <style name="Rea.ToolbarButton" parent="">
+                    <item name="android:textSize">12sp</item>
+                </style>
+            </resources>
+        """)
+        self.assertEqual([], self.project.check())
+
+    def test_estilo_filho_de_estilo_existente_passa(self) -> None:
+        self.project.write("app/src/main/res/values/themes.xml", """\
+            <?xml version="1.0" encoding="utf-8"?>
+            <resources>
+                <style name="Theme.X" parent="android:Theme.Material" />
+                <style name="Rea.Text" parent="">
+                    <item name="android:textSize">13sp</item>
+                </style>
+                <style name="Rea.Text.Dim">
+                    <item name="android:textSize">11sp</item>
+                </style>
+            </resources>
+        """)
+        self.assertEqual([], self.project.check())
+
+    def test_estilo_apontando_para_style_inexistente_no_layout(self) -> None:
+        self.project.write("app/src/main/res/layout/activity_main.xml", """\
+            <?xml version="1.0" encoding="utf-8"?>
+            <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android">
+                <TextView style="@style/Rea.Fantasma" />
+            </LinearLayout>
+        """)
+        errors = self.project.check()
+        self.assertTrue(any("@style/Rea.Fantasma" in e for e in errors), errors)
+
     def test_activity_declarada_sem_classe(self) -> None:
         self.project.write("app/src/main/java/io/rea/ide/MainActivity.java", """\
             package io.rea.ide;

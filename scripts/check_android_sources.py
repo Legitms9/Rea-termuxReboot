@@ -116,8 +116,6 @@ def check_layout_refs(root: Path) -> None:
         text = path.read_text("utf-8", "ignore")
         for m in re.finditer(r'="@(?!\+)(?:\+)?(layout|drawable|mipmap|string|color|style|array|xml)/([A-Za-z0-9_.]+)"', text):
             kind, name = m.group(1), m.group(2)
-            if kind == "style":
-                continue  # estilo pode herdar de tema do Material, não dá para listar offline
             pool = known.get(kind, set())
             if pool and name not in pool:
                 err(f"{path.relative_to(root)}: referência @{kind}/{name} não existe")
@@ -505,6 +503,51 @@ def check_interface_impls(root: Path) -> None:
                         f"mas não implementa {len(missing)} método(s): {shown}")
 
 
+# ----------------------------------------------------- herança implícita de <style>
+# No Android, um estilo cujo nome tem ponto herda do "prefixo" quando não declara parent:
+#   <style name="Rea.ToolbarButton">  ->  parent implícito "Rea"
+# Se "Rea" não existe, o build morre no AAPT2 com
+#   "resource style/Rea (aka io.rea.ide:style/Rea) not found" / "failed linking references".
+# Isso compila até o fim do build e falha no passo de link — caro de descobrir.
+
+
+def check_style_parents(root: Path) -> None:
+    values = list((root / "app/src/main/res").glob("values*/*.xml"))
+    values += list((root / "vendor").glob("*/**/src/main/res/values*/*.xml"))
+    if not values:
+        return
+
+    styles: dict[str, tuple[Path, str | None]] = {}
+    for path in values:
+        try:
+            tree = ET.parse(path).getroot()
+        except ET.ParseError:
+            continue  # já reportado em collect_resources
+        for node in tree.iter("style"):
+            name = node.get("name")
+            if name:
+                # parent=None -> atributo ausente; parent="" -> explicitamente sem pai
+                styles.setdefault(name, (path, node.get("parent")))
+
+    for name, (path, parent) in styles.items():
+        if parent is not None:
+            continue  # tem parent declarado (inclusive parent="")
+        if "." not in name:
+            continue  # estilo de nome simples não herda nada
+        implicit = name.rsplit(".", 1)[0]
+        if implicit in styles:
+            continue  # pai definido no projeto: ok
+        # o pai pode ser um estilo do framework/AppCompat (Theme.AppCompat.*, Widget.*)
+        if "." in implicit and implicit.split(".")[0] in (
+            "Theme", "Widget", "TextAppearance", "Platform", "Base"
+        ):
+            continue
+        err(f"{path.relative_to(root)}: <style name=\"{name}\"> sem parent herda de "
+            f"\"{implicit}\" (implicito pelo ponto no nome) e \"{implicit}\" nao existe — "
+            f"o AAPT2 falha com \"style/{implicit} not found\". "
+            f'Adicione parent="" se nao quiser heranca.')
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=str(Path(__file__).resolve().parent.parent))
@@ -521,6 +564,7 @@ def main() -> int:
     check_java_syntax(root)
     check_internal_calls(root)
     check_interface_impls(root)
+    check_style_parents(root)
 
     for w in warnings:
         print(f"  · aviso: {w}")
