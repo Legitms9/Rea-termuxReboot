@@ -40,7 +40,9 @@ public final class Workspace {
 
         public String subtitle() {
             if (directory) return "pasta";
-            return humanSize(size);
+            // Entry é uma classe aninhada estática: não herda os métodos de Workspace,
+            // precisa do nome da classe externa para chamar o helper.
+            return Workspace.humanSize(size);
         }
     }
 

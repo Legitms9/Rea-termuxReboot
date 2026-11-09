@@ -82,6 +82,17 @@ workflows:
       - name: testes do patcher (sem rede)
         script: python3 scripts/test_prepare_bootstrap.py
 
+      # Erro de compilação Java (R.id inexistente, método com nome errado, interface
+      # incompleta) só apareceria no fim, depois de ~1h de fila. Este passo é barato.
+      - name: fontes Android (recursos, manifest, chamadas, interfaces)
+        script: |
+          # javalang só é usado para ler Java offline; se não instalar, o script avisa
+          python3 -m pip install --quiet --disable-pip-version-check javalang \
+            || python3 -m pip install --quiet --disable-pip-version-check --break-system-packages javalang \
+            || echo "AVISO: javalang nao instalado, checagens de Java serao puladas"
+          python3 scripts/tests/test_android_sources.py
+          python3 scripts/check_android_sources.py
+
       - name: editor web + testes
         script: |
           node --version || { echo "node ausente"; exit 1; }
