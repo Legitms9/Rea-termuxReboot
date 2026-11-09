@@ -195,7 +195,7 @@ Se algo falhar, o passo onde parou já diz o que é. Os três erros mais prováv
 
 | Passo que falha | Causa | O que fazer |
 |---|---|---|
-| `bootstrap do Termux` | Codemagic sem `gh` e download do GitHub bloqueado | adicione a variável `REA_BOOTSTRAP_PROXY` = `https://ghproxy.net/https://github.com` em *Environment variables* |
+| `bootstrap do Termux` | Codemagic sem `gh` e download do GitHub bloqueado | adicione a variável `REA_BOOTSTRAP_PROXY` = `https://ghproxy.net` em *Environment variables* |
 | `Android SDK / NDK` | imagem sem NDK 26.1 | o passo instala; se falhar, troque `instance_type` para `mac_mini_m2` (também tem free tier) |
 | `build APK` | erro de compilação Java/C | me manda o trecho — é a primeira compilação real do projeto |
 
@@ -277,6 +277,6 @@ cd web && npm ci && npm run build && npm test   # editor em DOM real + filtro AN
 | `NDK not configured` | SDK sem NDK 26.1 | `sdkmanager "ndk;26.1.10909125"` |
 | `Asset 'www/index.html' não encontrado` → tela branca | build sem o passo web | `-Prea.webPrefetched=true` só se `web/dist` existir |
 | APK instala e fecha ao abrir | bootstrap corrompido/ABI errada | confira a ABI do aparelho (`adb shell getprop ro.product.cpu.abi`) |
-| `gh: command not found` | CI sem GitHub CLI | já tem fallback HTTP; ou `REA_BOOTSTRAP_PROXY=https://ghproxy.net/https://github.com` |
+| `gh: command not found` | CI sem GitHub CLI | já tem fallback HTTP; ou `REA_BOOTSTRAP_PROXY=https://ghproxy.net` |
 
 Manda o log da primeira falha que eu ajusto — as linhas de cima cobrem os casos que já vi.

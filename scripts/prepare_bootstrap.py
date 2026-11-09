@@ -73,6 +73,7 @@ EXEC_FILES = ("etc/termux/bootstrap/termux-bootstrap-second-stage.sh",)
 
 # Set from --source-dir; a module-level default keeps download() callable from tests.
 SOURCE_DIR = None
+ASSET_API_URLS: dict[str, str] = {}
 
 ABI_TO_ASSET = {
     "arm64-v8a": "aarch64",
@@ -129,7 +130,13 @@ def release_assets(release_tag: str) -> dict:
         log("       a verificacao sha256 sera pulada; use --source-dir com um zip confiavel")
         return {}
     out = {}
+    ASSET_API_URLS.clear()
     for asset in payload.get("assets", []):
+        if asset.get("id") and asset.get("name"):
+            ASSET_API_URLS[asset["name"]] = (
+                "https://api.github.com/repos/termux/termux-packages/releases/assets/"
+                + str(int(asset["id"]))
+            )
         digest = asset.get("digest") or ""
         if digest.startswith("sha256:"):
             out[asset["name"]] = digest.split(":", 1)[1]
@@ -173,7 +180,11 @@ def http_download_once(url: str, dest: Path) -> None:
     """Fetch one attempt, removing any partial file on failure."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        with urllib.request.urlopen(url, timeout=900) as resp, open(tmp, "wb") as fh:
+        headers = {"User-Agent": "rea-termux-ide-ci"}
+        if url.startswith("https://api.github.com/repos/termux/termux-packages/releases/assets/"):
+            headers["Accept"] = "application/octet-stream"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=900) as resp, open(tmp, "wb") as fh:
             shutil.copyfileobj(resp, fh, length=1 << 20)
         if tmp.stat().st_size < 1 << 20:
             raise RuntimeError(f"suspiciously small file ({tmp.stat().st_size} bytes)")
@@ -203,8 +214,9 @@ def download(url: str, dest: Path, expected_sha256: str, release: str, asset_nam
     Order and rationale:
       1. `gh release download` — authenticated, higher rate limits, follows the bucket 302.
       2. REA_BOOTSTRAP_MIRROR  — your own mirror / artifact store (yours to trust).
-      3. REA_BOOTSTRAP_PROXY   — public release proxies, e.g. https://ghproxy.net/https://github.com
+      3. REA_BOOTSTRAP_PROXY   — public release proxies, e.g. https://ghproxy.net
       4. the release URL       — plain internet access
+      5. GitHub's release asset API — alternative official route (may use the same CDN)
 
     A route that fails never aborts the whole build: we record the error and try the next one.
     The SHA-256 check is the only thing that decides success, so a proxy cannot slip us a
@@ -249,11 +261,17 @@ def download(url: str, dest: Path, expected_sha256: str, release: str, asset_nam
         if proxy:
             candidates.append(f"{proxy}/{url}")
         candidates.append(url)
+        api_url = ASSET_API_URLS.get(asset_name)
+        if api_url:
+            candidates.append(api_url)
 
         for effective in candidates:
             log(f"downloading {effective}")
             try:
                 http_download(effective, dest)
+                if not matches(dest):
+                    dest.unlink(missing_ok=True)
+                    raise RuntimeError("checksum mismatch")
                 break
             except Exception as e:  # noqa: BLE001 - try the next route
                 errors.append(f"{effective.split('?')[0]}: {e}")
@@ -261,7 +279,7 @@ def download(url: str, dest: Path, expected_sha256: str, release: str, asset_nam
         else:
             die("could not download {}\n  {}\n\nDicas:\n"
                 "  - ja tem o zip? passe --source-dir (ou use REA_BOOTSTRAP_SOURCE_DIR)\n"
-                "  - bloqueado? defina REA_BOOTSTRAP_PROXY=https://ghproxy.net/https://github.com\n"
+                "  - bloqueado? defina REA_BOOTSTRAP_PROXY=https://ghproxy.net\n"
                 "  - espelho proprio? defina REA_BOOTSTRAP_MIRROR=https://seu-servidor/bootstraps"
                 .format(asset_name, "\n  ".join(errors)))
 

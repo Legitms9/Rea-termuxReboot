@@ -106,7 +106,7 @@ workflows:
         script: |
           # Se gh nao estiver autenticado, prepare_bootstrap.py usa HTTP puro.
           # Três saídas se o download falhar (o passo seguinte valida o resultado de qualquer forma):
-          #   1. REA_BOOTSTRAP_PROXY=https://ghproxy.net/https://github.com
+          #   1. REA_BOOTSTRAP_PROXY=https://ghproxy.net
           #   2. REA_BOOTSTRAP_MIRROR=https://seu-servidor/bootstraps
           #   3. commit do próprio zip em cache/ e --source-dir cache/ (não recomendado: 40 MB no repo)
           python3 scripts/prepare_bootstrap.py \
