@@ -52,6 +52,8 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -167,8 +169,8 @@ def local_source(asset_name: str):
     return None
 
 
-def http_download(url: str, dest: Path) -> None:
-    """Plain HTTP fetch of a release asset (no gh, works on any CI)."""
+def http_download_once(url: str, dest: Path) -> None:
+    """Fetch one attempt, removing any partial file on failure."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
         with urllib.request.urlopen(url, timeout=900) as resp, open(tmp, "wb") as fh:
@@ -178,6 +180,20 @@ def http_download(url: str, dest: Path) -> None:
         tmp.rename(dest)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def http_download(url: str, dest: Path) -> None:
+    """Retry transient HTTP gateway errors before trying another route."""
+    for attempt in range(3):
+        try:
+            http_download_once(url, dest)
+            return
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                raise
+            delay = 2 ** (attempt + 1)
+            log(f"  HTTP {exc.code}; tentando novamente em {delay}s ({attempt + 2}/3)")
+            time.sleep(delay)
 
 
 def download(url: str, dest: Path, expected_sha256: str, release: str, asset_name: str) -> None:

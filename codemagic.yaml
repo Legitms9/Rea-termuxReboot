@@ -80,7 +80,8 @@ workflows:
         script: python3 scripts/patch_bootstrap.py --check --app-id "$REA_APP_ID"
 
       - name: testes do patcher (sem rede)
-        script: python3 scripts/test_prepare_bootstrap.py
+        script: |
+          python3 scripts/test_prepare_bootstrap.py && python3 scripts/tests/test_bootstrap_download.py
 
       # Erro de compilação Java (R.id inexistente, método com nome errado, interface
       # incompleta) só apareceria no fim, depois de ~1h de fila. Este passo é barato.
@@ -103,7 +104,7 @@ workflows:
 
       - name: bootstrap do Termux (prefixo reescrito, sha256 verificado)
         script: |
-          # Codemagic não tem o GitHub CLI: prepare_bootstrap.py cai para HTTP puro.
+          # Se gh nao estiver autenticado, prepare_bootstrap.py usa HTTP puro.
           # Três saídas se o download falhar (o passo seguinte valida o resultado de qualquer forma):
           #   1. REA_BOOTSTRAP_PROXY=https://ghproxy.net/https://github.com
           #   2. REA_BOOTSTRAP_MIRROR=https://seu-servidor/bootstraps
