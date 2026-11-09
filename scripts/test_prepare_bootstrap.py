@@ -154,6 +154,31 @@ def main() -> int:
             check("python não é executável no zip",
                   not ((zf.getinfo("lib/python3.12/os.py").external_attr >> 16) & 0o111))
 
+    # ------------------------------------------------- fallback de download (sem rede)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        # um destino que já existe e tem o sha correto não deve gerar download nenhum
+        good = tmp / "bootstrap-aarch64.zip"
+        good.write_bytes(b"x" * 10)
+        sha = pb.sha256_file(good)
+        try:
+            pb.download("https://example.invalid/bootstrap-aarch64.zip", good, sha,
+                        "release-x", "bootstrap-aarch64.zip")
+            check("cache hit evita download", True)
+        except SystemExit:
+            check("cache hit evita download", False)
+
+        # rota inválida -> tem de levantar SystemExit (die) e não estourar exceção crua
+        missing = tmp / "nope.zip"
+        try:
+            pb.download("https://example.invalid/nope.zip", missing, "0" * 64,
+                        "release-x", "nope.zip")
+            check("download impossível falha com die()", False)
+        except SystemExit:
+            check("download impossível falha com die()", True)
+        except Exception as e:  # noqa: BLE001
+            check("download impossível falha com die()", False, type(e).__name__)
+
     print()
     if FAILS:
         print(f"{len(FAILS)} teste(s) falharam")

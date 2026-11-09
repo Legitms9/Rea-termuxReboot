@@ -68,8 +68,10 @@ workflows:
       - name: bootstrap do Termux (prefixo reescrito, sha256 verificado)
         script: |
           # Codemagic não tem o GitHub CLI: prepare_bootstrap.py cai para HTTP puro.
-          # Se o download do release do GitHub for bloqueado, defina REA_BOOTSTRAP_PROXY em
-          # Environment variables (ex.: https://ghproxy.net/https://github.com).
+          # Três saídas se o download falhar (o passo seguinte valida o resultado de qualquer forma):
+          #   1. REA_BOOTSTRAP_PROXY=https://ghproxy.net/https://github.com
+          #   2. REA_BOOTSTRAP_MIRROR=https://seu-servidor/bootstraps
+          #   3. commit do próprio zip em cache/ e --source-dir cache/ (não recomendado: 40 MB no repo)
           python3 scripts/prepare_bootstrap.py \
             --release "$BOOTSTRAP_RELEASE" \
             --app-id "$REA_APP_ID" \

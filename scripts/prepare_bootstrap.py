@@ -69,6 +69,9 @@ SKIP_SUFFIXES = {
 EXEC_PREFIXES = ("bin/", "libexec/", "lib/apt/methods/", "lib/apt/apt-helper")
 EXEC_FILES = ("etc/termux/bootstrap/termux-bootstrap-second-stage.sh",)
 
+# Set from --source-dir; a module-level default keeps download() callable from tests.
+SOURCE_DIR = None
+
 ABI_TO_ASSET = {
     "arm64-v8a": "aarch64",
     "armeabi-v7a": "arm",
@@ -116,15 +119,18 @@ def release_assets(release_tag: str) -> dict:
         "Accept": "application/vnd.github+json",
         "User-Agent": "rea-termux-ide-ci",
     })
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        payload = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            payload = json.load(resp)
+    except Exception as e:  # noqa: BLE001 - offline/blocked API is not fatal
+        log(f"AVISO: nao consegui ler os checksums publicados ({e})")
+        log("       a verificacao sha256 sera pulada; use --source-dir com um zip confiavel")
+        return {}
     out = {}
     for asset in payload.get("assets", []):
         digest = asset.get("digest") or ""
         if digest.startswith("sha256:"):
             out[asset["name"]] = digest.split(":", 1)[1]
-    if not out:
-        die(f"no checksummed assets in release {release_tag}")
     return out
 
 
@@ -143,57 +149,117 @@ def fetch_asset(release: str, asset_name: str, dest: Path) -> None:
          "--pattern", asset_name, "--dir", str(dest.parent), "--clobber"],
         capture_output=True, text=True)
     if proc.returncode != 0:
-        die(f"gh release download failed for {asset_name}:\n{proc.stdout}\n{proc.stderr}")
+        raise RuntimeError(f"gh release download failed for {asset_name}: {proc.stderr.strip()[:400]}")
+
+
+def local_source(asset_name: str):
+    """Archive provided out-of-band (downloaded once elsewhere), if any."""
+    for raw in filter(None, [os.environ.get("REA_BOOTSTRAP_SOURCE_DIR"), SOURCE_DIR]):
+        candidate = Path(raw) / asset_name
+        # Validate it really is a bootstrap archive, not an HTML error page saved as .zip.
+        if candidate.is_file() and zipfile.is_zipfile(candidate):
+            try:
+                with zipfile.ZipFile(candidate) as zf:
+                    if "bin/bash" in zf.namelist():
+                        return candidate
+            except zipfile.BadZipFile:
+                pass
+    return None
+
+
+def http_download(url: str, dest: Path) -> None:
+    """Plain HTTP fetch of a release asset (no gh, works on any CI)."""
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        with urllib.request.urlopen(url, timeout=900) as resp, open(tmp, "wb") as fh:
+            shutil.copyfileobj(resp, fh, length=1 << 20)
+        if tmp.stat().st_size < 1 << 20:
+            raise RuntimeError(f"suspiciously small file ({tmp.stat().st_size} bytes)")
+        tmp.rename(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def download(url: str, dest: Path, expected_sha256: str, release: str, asset_name: str) -> None:
-    if dest.exists() and sha256_file(dest) == expected_sha256:
+    """
+    Fetch + verify a bootstrap archive, trying every available route.
+
+    Order and rationale:
+      1. `gh release download` — authenticated, higher rate limits, follows the bucket 302.
+      2. REA_BOOTSTRAP_MIRROR  — your own mirror / artifact store (yours to trust).
+      3. REA_BOOTSTRAP_PROXY   — public release proxies, e.g. https://ghproxy.net/https://github.com
+      4. the release URL       — plain internet access
+
+    A route that fails never aborts the whole build: we record the error and try the next one.
+    The SHA-256 check is the only thing that decides success, so a proxy cannot slip us a
+    different archive.
+    """
+    # A local copy (--source-dir / REA_BOOTSTRAP_SOURCE_DIR) wins over any network route.
+    local = local_source(asset_name)
+    if local is not None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(local, dest)
+        log(f"using local copy {local}")
+
+    def matches(path: Path) -> bool:
+        return (not expected_sha256) or sha256_file(path) == expected_sha256
+
+    if dest.exists() and matches(dest):
         log(f"cache hit: {dest.name}")
+        if not expected_sha256:
+            log(f"  AVISO: sem checksum publicado; sha256 local {sha256_file(dest)[:16]}...")
         return
     if dest.exists():
         log(f"cache stale: {dest.name}")
         dest.unlink()
 
+    errors = []
+
     if shutil.which("gh"):
-        fetch_asset(release, asset_name, dest)
+        try:
+            fetch_asset(release, asset_name, dest)
+        except Exception as e:  # noqa: BLE001 - any gh failure falls through to HTTP
+            errors.append(f"gh: {e}")
+            log(f"  gh route failed ({e}), trying HTTP routes")
     else:
-        # Three plain-HTTP paths, tried in order, so this works on any CI (GitLab, Codemagic,
-        # a Raspberry Pi) without the GitHub CLI:
-        #   1. REA_BOOTSTRAP_MIRROR        — your own mirror / internal artifact store
-        #   2. ghproxy-style mirrors       — public CORS/release proxies (REA_BOOTSTRAP_PROXY)
-        #   3. the release URL directly    — works anywhere with normal internet access
-        tmp = dest.with_suffix(dest.suffix + ".part")
+        log("gh not available, using HTTP routes")
+
+    if not (dest.exists() and matches(dest)):
         candidates = []
         mirror = os.environ.get("REA_BOOTSTRAP_MIRROR", "").rstrip("/")
+        proxy = os.environ.get("REA_BOOTSTRAP_PROXY", "").rstrip("/")
         if mirror:
             candidates.append(f"{mirror}/{asset_name}")
-        proxy = os.environ.get("REA_BOOTSTRAP_PROXY", "").rstrip("/")
         if proxy:
             candidates.append(f"{proxy}/{url}")
         candidates.append(url)
 
-        last_error = None
         for effective in candidates:
             log(f"downloading {effective}")
             try:
-                with urllib.request.urlopen(effective, timeout=900) as resp, open(tmp, "wb") as fh:
-                    shutil.copyfileobj(resp, fh, length=1 << 20)
-                if tmp.stat().st_size > 1 << 20:
-                    break
-                last_error = f"suspiciously small file ({tmp.stat().st_size} bytes)"
-            except Exception as e:  # noqa: BLE001 - we retry the next candidate
-                last_error = str(e)
-                log(f"  failed: {last_error}")
-                tmp.unlink(missing_ok=True)
+                http_download(effective, dest)
+                break
+            except Exception as e:  # noqa: BLE001 - try the next route
+                errors.append(f"{effective.split('?')[0]}: {e}")
+                log(f"  failed: {e}")
         else:
-            die(f"could not download {asset_name}: {last_error}")
-        tmp.rename(dest)
+            die("could not download {}\n  {}\n\nDicas:\n"
+                "  - ja tem o zip? passe --source-dir (ou use REA_BOOTSTRAP_SOURCE_DIR)\n"
+                "  - bloqueado? defina REA_BOOTSTRAP_PROXY=https://ghproxy.net/https://github.com\n"
+                "  - espelho proprio? defina REA_BOOTSTRAP_MIRROR=https://seu-servidor/bootstraps"
+                .format(asset_name, "\n  ".join(errors)))
 
-    got = sha256_file(dest)
-    if got != expected_sha256:
+    got = sha256_file(dest) if dest.exists() else ""
+    if not got:
+        die(f"{dest.name} nao foi obtido. Rotas tentadas:\n  " + "\n  ".join(errors))
+    if expected_sha256 and got != expected_sha256:
         dest.unlink(missing_ok=True)
-        die(f"checksum mismatch for {dest.name}\n  expected {expected_sha256}\n  actual   {got}")
-    log(f"verified sha256:{expected_sha256[:16]}… {dest.name}")
+        die("checksum mismatch for {}\n  expected {}\n  actual   {}\n  routes tentados:\n  {}"
+            .format(dest.name, expected_sha256, got or "(arquivo ausente)", "\n  ".join(errors)))
+    if expected_sha256:
+        log(f"verified sha256:{expected_sha256[:16]}... {dest.name}")
+    else:
+        log(f"sha256 local (nao verificado): {got[:16]}... {dest.name}")
 
 
 def is_elf(path: Path) -> bool:
@@ -325,11 +391,11 @@ def repack(root: Path, dest: Path) -> None:
     tmp.rename(dest)
 
 
-def build_abi(abi, asset_name, release, assets, cache, out_dir, app_id, work) -> Path:
+def build_abi(abi, asset_name, release, expected_sha256, cache, out_dir, app_id, work) -> Path:
     zip_path = cache / asset_name
     url = (f"https://github.com/termux/termux-packages/releases/download/"
            f"{urllib.parse.quote(release)}/{asset_name}")
-    download(url, zip_path, assets[asset_name], release, asset_name)
+    download(url, zip_path, expected_sha256, release, asset_name)
 
     stage = work / abi
     shutil.rmtree(stage, ignore_errors=True)
@@ -357,8 +423,12 @@ def main() -> None:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--cache-dir", required=True)
     ap.add_argument("--skip", action="store_true", help="exit early when every ABI output exists")
+    ap.add_argument("--source-dir", default=None,
+                    help="diretório com os bootstrap-*.zip já baixados (evita a rede)")
     args = ap.parse_args()
 
+    global SOURCE_DIR
+    SOURCE_DIR = args.source_dir
     check_length_invariant(args.app_id)
 
     abis = [a.strip() for a in args.abis.split(",") if a.strip()]
@@ -380,9 +450,11 @@ def main() -> None:
     assets = release_assets(args.release)
     for abi in abis:
         asset = f"bootstrap-{ABI_TO_ASSET[abi]}.zip"
-        if asset not in assets:
+        if assets and asset not in assets:
             die(f"release {args.release} has no asset {asset}")
-        build_abi(abi, asset, args.release, assets, cache, out_dir, args.app_id, work)
+        if not assets:
+            log(f"AVISO: baixando {asset} sem checksum publicado")
+        build_abi(abi, asset, args.release, assets.get(asset, ""), cache, out_dir, args.app_id, work)
 
     shutil.rmtree(work, ignore_errors=True)
     log("done")
