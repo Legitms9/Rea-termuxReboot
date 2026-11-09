@@ -8,7 +8,7 @@
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
-    "test": "node test/editor.test.mjs",
+    "test": "node test/editor.test.mjs && node test/linefilter.test.mjs",
     "preview": "node server.mjs",
     "dev": "node -e \"require('fs').copyFileSync('dev/preview.html','dist/preview.html')\" && node server.mjs"
   },

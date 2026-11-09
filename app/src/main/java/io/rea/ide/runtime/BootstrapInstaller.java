@@ -142,7 +142,10 @@ public final class BootstrapInstaller {
             File link = new File(staging, linkPath);
             File linkParent = link.getParentFile();
             if (linkParent != null) mkdirOrThrow(linkParent);
-            if (link.exists() || isSymlink(link)) link.delete();
+            if (link.exists() || isSymlink(link)) {
+                //noinspection ResultOfMethodCallIgnored
+                link.delete();
+            }
             try {
                 Os.symlink(targetPath, link.getAbsolutePath());
             } catch (ErrnoException e) {
@@ -253,12 +256,15 @@ public final class BootstrapInstaller {
         }
     }
 
+    /**
+     * True only for a symlink (including a dangling one). {@code File.isFile()/exists()} follow
+     * links and would lie about dangling entries, which the bootstrap is full of.
+     */
     private static boolean isSymlink(File f) {
         try {
-            File parent = f.getParentFile();
-            return parent != null && !f.getCanonicalPath().equals(
-                    new File(parent.getCanonicalFile(), f.getName()).getPath())
-                    && android.system.Os.lstat(f.getAbsolutePath()).st_mode != 0;
+            android.system.StructStat st = android.system.Os.lstat(f.getAbsolutePath());
+            return (st.st_mode & android.system.OsConstants.S_IFMT)
+                    == android.system.OsConstants.S_IFLNK;
         } catch (Exception e) {
             return false;
         }
@@ -276,7 +282,8 @@ public final class BootstrapInstaller {
     }
 
     public static void deleteRecursively(File f) {
-        if (f == null || !f.exists() && !isSymlink(f)) return;
+        if (f == null) return;
+        if (!f.exists() && !isSymlink(f)) return;
         File[] children = f.listFiles();
         if (children != null) {
             for (File c : children) deleteRecursively(c);

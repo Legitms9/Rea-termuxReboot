@@ -22,11 +22,35 @@
             android:paddingEnd="4dp" />
     </HorizontalScrollView>
 
-    <com.termux.view.TerminalView
-        android:id="@+id/terminal_view"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1">
+
+        <com.termux.view.TerminalView
+            android:id="@+id/terminal_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- build/run console: no pty, merged stdout/stderr, ANSI stripped -->
+        <ScrollView
+            android:id="@+id/console_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/rea_terminal_bg"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/console_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:textColor="@color/rea_text"
+                android:textIsSelectable="true"
+                android:padding="10dp" />
+        </ScrollView>
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -69,6 +93,11 @@
             android:id="@+id/term_btn_new"
             style="@style/Rea.Key"
             android:text="+ Shell" />
+
+        <TextView
+            android:id="@+id/term_btn_console"
+            style="@style/Rea.Key"
+            android:text="⌗ Build" />
 
         <TextView
             android:id="@+id/term_btn_keyboard"

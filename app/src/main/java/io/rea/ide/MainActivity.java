@@ -23,6 +23,7 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -32,6 +33,7 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.termux.terminal.TerminalProcess;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
@@ -62,6 +64,10 @@ public class MainActivity extends AppCompatActivity
     private WebView editor;
     private TerminalView terminalView;
     private LinearLayout sessionTabs;
+    private LinearLayout extraKeysRow;
+    private ScrollView consoleScroll;
+    private TextView consoleText;
+    private final StringBuilder consoleBuffer = new StringBuilder();
     private RecyclerView fileList;
     private FileAdapter fileAdapter;
     private TextView bottomPath, bottomStatus, drawerPath, tabFiles, tabEditor, tabTerminal;
@@ -163,6 +169,7 @@ public class MainActivity extends AppCompatActivity
      */
     private void buildPager() {
         editorHost = findViewById(R.id.editor_host);
+        extraKeysRow = findViewById(R.id.extra_keys_row);
         terminalHost = findViewById(R.id.terminal_host);
 
         View editorPage = getLayoutInflater().inflate(R.layout.page_editor, editorHost, false);
@@ -175,7 +182,10 @@ public class MainActivity extends AppCompatActivity
         terminalView.setTerminalViewClient(this);
         terminalView.setTextSize(mTerminalFontSize);
         sessionTabs = terminalPage.findViewById(R.id.session_tabs);
+        consoleScroll = terminalPage.findViewById(R.id.console_scroll);
+        consoleText = terminalPage.findViewById(R.id.console_text);
         wireTerminalKeys(terminalPage);
+        buildExtraKeys();
         terminalHost.addView(terminalPage);
 
         showPage(PAGE_EDITOR);
@@ -207,7 +217,8 @@ public class MainActivity extends AppCompatActivity
         highlightTab(tabFiles, false);
         highlightTab(tabEditor, activePage == PAGE_EDITOR);
         highlightTab(tabTerminal, activePage == PAGE_TERMINAL);
-        extraKeys.setVisibility(activePage == PAGE_TERMINAL ? View.VISIBLE : View.GONE);
+        extraKeys.setVisibility(View.VISIBLE);
+        buildExtraKeys();
         updateBottomBar();
     }
 
@@ -515,6 +526,92 @@ public class MainActivity extends AppCompatActivity
         drawer.openDrawer(Gravity.START);
     }
 
+    // -------------------------------------------------------------- extra keys
+
+    /** Context-sensitive key row: symbols for the editor, control keys for the terminal. */
+    private void buildExtraKeys() {
+        if (extraKeysRow == null) return;
+        extraKeysRow.removeAllViews();
+        // The row scrolls horizontally: 14 keys x 40dp does not fit a phone in portrait.
+        String[] keys = activePage == PAGE_TERMINAL
+                ? new String[] {"⏎", "⇥", "←", "↑", "↓", "→", "^C", "^D", "|", "/", "-", "~", "$", "&"}
+                : new String[] {"⇥", "←", "↑", "↓", "→", "{", "}", "(", ")", "\"", "'", ";", ":", "/", "*"};
+        for (String k : keys) {
+            TextView tv = new TextView(this);
+            tv.setText(k);
+            tv.setTextSize(12);
+            tv.setGravity(Gravity.CENTER);
+            tv.setTextColor(getColor(R.color.rea_text));
+            tv.setBackgroundResource(R.drawable.bg_key);
+            int w = (int) (getResources().getDisplayMetrics().density * 40);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w,
+                    (int) (getResources().getDisplayMetrics().density * 34));
+            lp.setMargins(2, 2, 2, 2);
+            tv.setLayoutParams(lp);
+            tv.setOnClickListener(v -> onExtraKey(k));
+            extraKeysRow.addView(tv);
+        }
+    }
+
+    private void onExtraKey(String key) {
+        if (activePage == PAGE_TERMINAL) {
+            switch (key) {
+                case "⏎": sendSeq("\r"); break;
+                case "⇥": sendSeq("\t"); break;
+                case "←": sendSeq("\u001b[D"); break;
+                case "↑": sendSeq("\u001b[A"); break;
+                case "↓": sendSeq("\u001b[B"); break;
+                case "→": sendSeq("\u001b[C"); break;
+                case "^C": sendSeq("\u0003"); break;
+                case "^D": sendSeq("\u0004"); break;
+                case "|": sendSeq("|"); break;
+                default: sendSeq(key);
+            }
+        } else {
+            String insert = "⇥".equals(key) ? "  " : key;
+            js("ReaIde.insertText(" + jsStr(insert) + ")");
+        }
+    }
+
+    // ---------------------------------------------------------------- console
+
+    /** Runs a command without a pty and streams it into the build console. */
+    private void runInConsole(String command) {
+        if (!bootstrapReady) {
+            toast("Ambiente ainda instalando…");
+            return;
+        }
+        showPage(PAGE_TERMINAL);
+        consoleScroll.setVisibility(View.VISIBLE);
+        terminalView.setVisibility(View.GONE);
+        appendConsole("$ " + command + "\n");
+
+        String shell = ReaPaths.binPrefix() + "/bash";
+        if (!new File(shell).exists()) shell = ReaPaths.binPrefix() + "/sh";
+        String[] argv = {shell, "-lc", command};
+        TerminalProcess.run(shell, cwd, argv, ShellEnv.build(cwd, false),
+                new TerminalProcess.LineListener() {
+                    @Override public void onLine(String line) {
+                        main.post(() -> appendConsole(LineFilter.stripAnsi(line) + "\n"));
+                    }
+                    @Override public void onExit(int exitCode) {
+                        main.post(() -> appendConsole("\n[processo finalizado com código " + exitCode + "]\n"));
+                    }
+                });
+    }
+
+    private void appendConsole(String text) {
+        consoleBuffer.append(text);
+        if (consoleBuffer.length() > 200_000) consoleBuffer.delete(0, 100_000);
+        consoleText.setText(consoleBuffer);
+        consoleScroll.post(() -> consoleScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void clearConsole() {
+        consoleBuffer.setLength(0);
+        consoleText.setText("");
+    }
+
     // ---------------------------------------------------------------- terminal
 
     private void buildTerminal() {
@@ -536,6 +633,11 @@ public class MainActivity extends AppCompatActivity
         terminalPage.findViewById(R.id.term_btn_down).setOnClickListener(v -> sendSeq("\u001b[B"));
         terminalPage.findViewById(R.id.term_btn_ctrl).setOnClickListener(v -> toggleModifier('c'));
         terminalPage.findViewById(R.id.term_btn_alt).setOnClickListener(v -> toggleModifier('a'));
+        terminalPage.findViewById(R.id.term_btn_console).setOnClickListener(v -> {
+            boolean showConsole = consoleScroll.getVisibility() != View.VISIBLE;
+            consoleScroll.setVisibility(showConsole ? View.VISIBLE : View.GONE);
+            terminalView.setVisibility(showConsole ? View.GONE : View.VISIBLE);
+        });
     }
 
     private boolean ctrlDown = false, altDown = false;
@@ -605,9 +707,7 @@ public class MainActivity extends AppCompatActivity
     // ------------------------------------------------ TerminalManager.Listener
 
     @Override public void onSessionTextChanged(TerminalSession session) {
-        if (terminalView != null && session == (activePage == PAGE_TERMINAL ? attached() : null)) {
-            terminalView.onScreenUpdated();
-        }
+        if (terminalView != null && session == attached()) terminalView.onScreenUpdated();
     }
 
     private TerminalSession attached() {
@@ -784,6 +884,9 @@ public class MainActivity extends AppCompatActivity
                 "node .",
                 "bash run.sh",
                 "Comando personalizado…",
+                "Console: npm test",
+                "Console: comando personalizado…",
+                "Limpar console",
         };
         new AlertDialog.Builder(this)
                 .setTitle("Executar")
@@ -796,8 +899,25 @@ public class MainActivity extends AppCompatActivity
                         case 2: sendSeq("cd " + cwd + " && node .\r"); break;
                         case 3: sendSeq("cd " + cwd + " && bash run.sh\r"); break;
                         case 4: promptCustomCommand(); break;
+                        case 5: runInConsole("npm test"); break;
+                        case 6: promptConsoleCommand(); break;
+                        case 7: clearConsole(); break;
                     }
                 })
+                .show();
+    }
+
+    private void promptConsoleCommand() {
+        EditText input = new EditText(this);
+        input.setHint("./gradlew test");
+        new AlertDialog.Builder(this)
+                .setTitle("Console em " + ShellEnv.prettyPath(cwd))
+                .setView(input)
+                .setPositiveButton("Executar", (d, w) -> {
+                    String cmd = input.getText().toString().trim();
+                    if (!cmd.isEmpty()) runInConsole(cmd);
+                })
+                .setNegativeButton("Cancelar", null)
                 .show();
     }
 

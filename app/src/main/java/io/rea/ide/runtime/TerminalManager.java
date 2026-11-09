@@ -56,14 +56,25 @@ public final class TerminalManager implements TerminalSessionClient {
 
     public Descriptor createSession(String cwd, String shell, String[] args) {
         if (cwd == null || cwd.isEmpty()) cwd = ReaPaths.home();
-        String shellPath = shell != null ? shell : ReaPaths.binPrefix() + "/login";
-        if (!new java.io.File(shellPath).exists()) shellPath = ReaPaths.binPrefix() + "/bash";
-        if (!new java.io.File(shellPath).exists()) shellPath = ReaPaths.binPrefix() + "/sh";
+        String shellPath = shell;
+        if (shellPath == null) {
+            // Same choice termux-app makes: $PREFIX/bin/login gives you the full Termux login
+            // environment (it re-execs the user's shell after sourcing the profile).
+            // bash/sh are fallbacks for a partially installed prefix.
+            for (String candidate : new String[] {"/login", "/bash", "/sh"}) {
+                if (new java.io.File(ReaPaths.binPrefix() + candidate).exists()) {
+                    shellPath = ReaPaths.binPrefix() + candidate;
+                    break;
+                }
+            }
+        }
+        if (shellPath == null) shellPath = ReaPaths.binPrefix() + "/sh";
 
         String[] argv;
         if (args == null) {
-            // login shell: -l makes $PATH include the prefix unconditionally.
-            argv = new String[] {shellPath, "-l"};
+            // `login` takes no flags; `bash` needs -l to source the profile and export $PREFIX.
+            boolean isLogin = shellPath.endsWith("/login");
+            argv = isLogin ? new String[] {shellPath} : new String[] {shellPath, "-l"};
         } else {
             argv = new String[args.length + 1];
             argv[0] = shellPath;
