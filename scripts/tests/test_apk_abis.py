@@ -39,12 +39,20 @@ cases = [
     ("sem bundle do editor", make('noasset.apk', ['arm64-v8a'], asset=False), False),
     ("bootstrap de outra ABI", make('wrongboot.apk', ['arm64-v8a'],
         boot=b"not a zip"), False),
+    # sem TMPDIR definido (como num shell "cru") o passo não pode falhar por caminho vazio
+    ("ambiente sem TMPDIR", make('notmp.apk', ['arm64-v8a']), True),
 ]
 
 fails = 0
 for label, apk, should_pass in cases:
     script = step.replace("APKS=$(find app/build/outputs/apk -name '*.apk')", f"APKS={apk}")
-    r = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+    env = dict(os.environ)
+    if "sem TMPDIR" in label:
+        env.pop("TMPDIR", None)
+        env.pop("RUNNER_TEMP", None)
+    else:
+        env.setdefault("TMPDIR", tempfile.gettempdir())
+    r = subprocess.run(['bash', '-c', script], capture_output=True, text=True, env=env)
     ok = r.returncode == 0
     good = ok == should_pass
     fails += 0 if good else 1

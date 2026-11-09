@@ -183,6 +183,7 @@ workflows:
       - name: conferir cada APK (uma ABI por APK)
         script: |
           set -e
+          WORK="${TMPDIR:-${RUNNER_TEMP:-/tmp}}"
           APKS=$(find app/build/outputs/apk -name '*.apk')
           [ -n "$APKS" ] || { echo "nenhum APK gerado"; exit 1; }
           echo "$APKS" | wc -l | xargs echo "APKs gerados:"
@@ -210,11 +211,12 @@ workflows:
             # 3. o editor tem de estar dentro
             unzip -l "$APK" | grep -q "assets/www/index.html" || {
               echo "ERRO: bundle do editor não entrou em $APK"; exit 1; }
-            unzip -p "$APK" "lib/$ABI/libtermux-bootstrap.so" > "$TMPDIR/boot.zip"
+            unzip -p "$APK" "lib/$ABI/libtermux-bootstrap.so" > "$WORK/boot.zip"
             python3 - "$ABI" <<'PY'
           import sys, zipfile
           import os
-          z = zipfile.ZipFile(os.path.join(os.environ.get("TMPDIR", "/tmp"), "boot.zip"))
+          work = os.environ.get("TMPDIR") or os.environ.get("RUNNER_TEMP") or "/tmp"
+          z = zipfile.ZipFile(os.path.join(work, "boot.zip"))
           data = z.read("bin/bash")
           assert data[:4] == b"\x7fELF", "bin/bash não é ELF"
           assert b"/data/data/io.rea.ide/files/usr" in data, "prefixo não reescrito"
