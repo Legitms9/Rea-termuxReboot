@@ -78,7 +78,7 @@ public class MainActivity extends AppCompatActivity
     private int activePage = PAGE_EDITOR;
 
     private boolean bootstrapReady = false;
-    private String cwd = ReaPaths.projects();
+    private String cwd;
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean editorPageReady = false;
     private String pendingOpenPath;
