@@ -111,6 +111,25 @@ https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/65202ee3-rea-t
 
 A linha 16 tem de ser `instance_type: linux` (sem `_x2`).
 
+### Plano grátis da Codemagic = só macOS
+
+`The selected instance type is not available with the current billing plan` significa: o runner
+pedido **não existe no plano grátis**. No plano gratuito só há máquinas **macOS**; `linux`,
+`linux_x2`, `linux_x4` e `windows_x2` exigem billing.
+
+O workflow usa `instance_type: mac_mini_m2`. Build Android funciona normal no macOS, com duas
+consequências que já estão tratadas no arquivo:
+
+| Item | Por quê |
+|---|---|
+| `sha256sum` → `shasum -a 256` | macOS não tem `sha256sum` |
+| `$RUNNER_TEMP`/`$TMPDIR` em vez de `/tmp` fixo | mesmo motivo, e segue o padrão do CI |
+| `sdkmanager` procurado em vários caminhos + `commandlinetools-mac` | a imagem macOS já traz SDK, mas o caminho varia |
+
+Fila: builds grátis em macOS podem esperar **30–60 min** antes de começar (não é erro). O build em
+si leva ~10 min. Se isso incomodar, a alternativa que não tem fila é o **Google Cloud Shell**
+(seção 1) — 10 min do início ao APK.
+
 ### Arquitetura (ABI): 32 bits vs 64 bits
 
 O workflow gera **um APK por ABI** (`splits { abi { ... } }`), não um APK universal:

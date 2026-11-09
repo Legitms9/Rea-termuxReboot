@@ -9,13 +9,15 @@
 # Schema: https://codemagic.io/codemagic-schema.json
 #   - `cache:` fica no NÍVEL DO WORKFLOW (não dentro de environment)
 #   - environment não aceita `python:` (a imagem Ubuntu já traz python3)
-#   - `linux_x2` exige billing ativo; `linux` é o runner grátis
+#   - PLANO GRÁTIS = SÓ macOS. `linux`, `linux_x2`, `linux_x4` e `windows_x2` exigem billing
+#     ("The selected instance type is not available with the current billing plan").
+#     Portanto: instance_type: mac_mini_m2 — build Android roda normal nele.
 # scripts/check_codemagic.py valida essas regras antes de você clicar em "Start build".
 
 workflows:
   android-apk:
-    name: REA IDE APK (arm64)
-    instance_type: linux
+    name: REA IDE APK (arm64 + arm32)
+    instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
       groups: []
@@ -41,6 +43,21 @@ workflows:
           include: true
       cancel_previous_builds: true
     scripts:
+      - name: Validar este arquivo (impede runner que a conta não tem)
+        script: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          # Plano grátis = apenas macOS. Este check falha ANTES de gastar build.
+          FREE = {"mac_mini", "mac_mini_m2"}
+          text = pathlib.Path("codemagic.yaml").read_text()
+          bad = [m.group(1) for m in re.finditer(r"^\s*instance_type:\s*(\S+)", text, re.M)
+                 if m.group(1) not in FREE]
+          if bad:
+              print(f"ERRO: instance_type {bad} exige billing; use um de {sorted(FREE)}")
+              sys.exit(1)
+          print("instance_type ok para plano grátis")
+          PY
+
       - name: Ambiente (diagnóstico)
         script: |
           echo "branch: $CM_BRANCH  commit: $CM_COMMIT"
@@ -48,8 +65,16 @@ workflows:
           java -version 2>&1 | head -2
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-<vazio>}"
+          echo "uname: $(uname -s)"
           node --version
           python3 --version
+          # macOS não tem sha256sum; define o comando disponível para os passos seguintes
+          if command -v sha256sum > /dev/null 2>&1; then
+            echo "SHA256_CMD=sha256sum" >> "$CM_ENV"
+          else
+            echo "SHA256_CMD='shasum -a 256'" >> "$CM_ENV"
+          fi
+          echo "sha256 via: $([ -n "$(command -v sha256sum)" ] && echo sha256sum || echo shasum)"
 
       - name: invariante do applicationId
         script: python3 scripts/patch_bootstrap.py --check --app-id "$REA_APP_ID"
@@ -100,35 +125,45 @@ workflows:
 
       - name: Android SDK / NDK
         script: |
-          # A imagem Linux da Codemagic não garante SDK Android; instalamos o cmdline-tools
-          # se o sdkmanager não estiver disponível. Idempotente.
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}"
+          # Descobre o SDK independente da plataforma (macOS nas máquinas grátis).
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
+          [ -d "$SDK" ] || SDK="$HOME/android-sdk"
           mkdir -p "$SDK"
           export ANDROID_SDK_ROOT="$SDK" ANDROID_HOME="$SDK"
 
-          if ! command -v sdkmanager > /dev/null 2>&1; then
-            if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-              export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
-            else
-              echo "instalando Android cmdline-tools em $SDK"
-              curl -fsSL -o /tmp/cmdtools.zip \
-                https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-              mkdir -p "$SDK/cmdline-tools"
-              unzip -q /tmp/cmdtools.zip -d "$SDK/cmdline-tools"
-              mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
-              rm -f /tmp/cmdtools.zip
-              export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
-            fi
-          fi
+          find_sdkmanager() {
+            for c in "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+                     "$SDK/cmdline-tools/bin/sdkmanager" \
+                     "$SDK/tools/bin/sdkmanager"; do
+              [ -x "$c" ] && { echo "$c"; return 0; }
+            done
+            command -v sdkmanager 2>/dev/null || return 1
+          }
+          SDKMANAGER=$(find_sdkmanager || true)
 
-          yes | sdkmanager --licenses > /dev/null || true
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager não encontrado; instalando cmdline-tools"
+            case "$(uname -s)" in
+              Darwin) CT=commandlinetools-mac-11076708_latest.zip ;;
+              *)      CT=commandlinetools-linux-11076708_latest.zip ;;
+            esac
+            curl -fsSL -o "$RUNNER_TEMP/cmdtools.zip" \
+              "https://dl.google.com/android/repository/$CT"
+            mkdir -p "$SDK/cmdline-tools"
+            unzip -q "$RUNNER_TEMP/cmdtools.zip" -d "$SDK/cmdline-tools"
+            mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+            SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
           NEED=""
           [ -d "$SDK/platforms/android-34" ] || NEED="$NEED platforms;android-34"
           [ -d "$SDK/build-tools/34.0.0" ] || NEED="$NEED build-tools;34.0.0"
           [ -d "$SDK/ndk/26.1.10909125" ] || NEED="$NEED ndk;26.1.10909125"
           if [ -n "$NEED" ]; then
             echo "instalando:$NEED"
-            sdkmanager --install $NEED > /dev/null
+            "$SDKMANAGER" --install $NEED > /dev/null
           fi
 
           # SDK local do Gradle (e do CI): sem isso o Gradle reclama de SDK location
@@ -175,17 +210,24 @@ workflows:
             # 3. o editor tem de estar dentro
             unzip -l "$APK" | grep -q "assets/www/index.html" || {
               echo "ERRO: bundle do editor não entrou em $APK"; exit 1; }
-            unzip -p "$APK" "lib/$ABI/libtermux-bootstrap.so" > /tmp/boot.zip
+            unzip -p "$APK" "lib/$ABI/libtermux-bootstrap.so" > "$TMPDIR/boot.zip"
             python3 - "$ABI" <<'PY'
           import sys, zipfile
-          z = zipfile.ZipFile("/tmp/boot.zip")
+          import os
+          z = zipfile.ZipFile(os.path.join(os.environ.get("TMPDIR", "/tmp"), "boot.zip"))
           data = z.read("bin/bash")
           assert data[:4] == b"\x7fELF", "bin/bash não é ELF"
           assert b"/data/data/io.rea.ide/files/usr" in data, "prefixo não reescrito"
           print(f"   {sys.argv[1]}: bootstrap ok ({len(z.namelist())} entradas)")
           PY
           done
-          sha256sum $APKS > SHA256SUMS.txt && cat SHA256SUMS.txt
+          # macOS não tem sha256sum
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum $APKS > SHA256SUMS.txt
+          else
+            shasum -a 256 $APKS > SHA256SUMS.txt
+          fi
+          cat SHA256SUMS.txt
 
     artifacts:
       - app/build/outputs/**/*.apk

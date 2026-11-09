@@ -45,7 +45,10 @@ INSTANCE_TYPES = {
     "mac_mini", "mac_mini_m1", "mac_mini_m2", "mac_mini_m4", "mac_studio_m4_max",
     "mac_pro", "linux", "linux_x2", "linux_x4", "windows_x2",
 }
-FREE_INSTANCE_TYPES = {"linux", "mac_mini", "mac_mini_m2"}
+# The free plan is macOS ONLY. Linux/Windows runners (linux, linux_x2, linux_x4, windows_x2)
+# require billing and fail instantly with
+# "The selected instance type is not available with the current billing plan."
+FREE_INSTANCE_TYPES = {"mac_mini", "mac_mini_m2"}
 TRIGGER_EVENTS = {"push", "pull_request", "tag", "pull_request_labeled", "pull_request_labelled"}
 
 problems: list[str] = []
@@ -66,8 +69,8 @@ def check_workflow(wid: str, wf: dict) -> None:
             problem(f"{wid}: instance_type '{it}' não existe "
                     f"(válidos: {', '.join(sorted(INSTANCE_TYPES))})")
         elif it not in FREE_INSTANCE_TYPES:
-            problem(f"{wid}: instance_type '{it}' exige billing ativo; "
-                    f"use um de {', '.join(sorted(FREE_INSTANCE_TYPES))}")
+            problem(f"{wid}: instance_type '{it}' exige billing ativo. O plano grátis da "
+                    f"Codemagic é só macOS; use um de {', '.join(sorted(FREE_INSTANCE_TYPES))}")
 
     dur = wf.get("max_build_duration")
     if dur is not None and not (isinstance(dur, int) and 1 <= dur <= 120):
