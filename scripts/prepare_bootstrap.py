@@ -157,12 +157,36 @@ def download(url: str, dest: Path, expected_sha256: str, release: str, asset_nam
     if shutil.which("gh"):
         fetch_asset(release, asset_name, dest)
     else:
-        mirror = os.environ.get("REA_BOOTSTRAP_MIRROR", "").rstrip("/")
-        effective = f"{mirror}/{asset_name}" if mirror else url
-        log(f"downloading {effective}")
+        # Three plain-HTTP paths, tried in order, so this works on any CI (GitLab, Codemagic,
+        # a Raspberry Pi) without the GitHub CLI:
+        #   1. REA_BOOTSTRAP_MIRROR        — your own mirror / internal artifact store
+        #   2. ghproxy-style mirrors       — public CORS/release proxies (REA_BOOTSTRAP_PROXY)
+        #   3. the release URL directly    — works anywhere with normal internet access
         tmp = dest.with_suffix(dest.suffix + ".part")
-        with urllib.request.urlopen(effective, timeout=900) as resp, open(tmp, "wb") as fh:
-            shutil.copyfileobj(resp, fh, length=1 << 20)
+        candidates = []
+        mirror = os.environ.get("REA_BOOTSTRAP_MIRROR", "").rstrip("/")
+        if mirror:
+            candidates.append(f"{mirror}/{asset_name}")
+        proxy = os.environ.get("REA_BOOTSTRAP_PROXY", "").rstrip("/")
+        if proxy:
+            candidates.append(f"{proxy}/{url}")
+        candidates.append(url)
+
+        last_error = None
+        for effective in candidates:
+            log(f"downloading {effective}")
+            try:
+                with urllib.request.urlopen(effective, timeout=900) as resp, open(tmp, "wb") as fh:
+                    shutil.copyfileobj(resp, fh, length=1 << 20)
+                if tmp.stat().st_size > 1 << 20:
+                    break
+                last_error = f"suspiciously small file ({tmp.stat().st_size} bytes)"
+            except Exception as e:  # noqa: BLE001 - we retry the next candidate
+                last_error = str(e)
+                log(f"  failed: {last_error}")
+                tmp.unlink(missing_ok=True)
+        else:
+            die(f"could not download {asset_name}: {last_error}")
         tmp.rename(dest)
 
     got = sha256_file(dest)

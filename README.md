@@ -10,17 +10,37 @@ por **GitHub Actions** com artefato publicado.
 - **Zero dependência de apps externos**: o bootstrap mora dentro do APK.
 
 ```
-.github/workflows/build-apk.yml   CI: guard → web → bootstrap → APK → artefato
+scripts/build_cloudshell.sh       build em qualquer VM Linux, sem CI (Cloud Shell, Codespaces…)
+.gitlab-ci.yml / codemagic.yaml   CIs alternativas, mesmo pipeline: testes → bootstrap → APK
+azure-pipelines.yml
+.github/workflows/build-apk.yml   pipeline de referência (guard → web → bootstrap → APK)
+docker/Dockerfile                 build reprodutível sem SDK local
 ```
 
-## Baixar o APK
+## Gerar o APK (sem GitHub Actions)
 
-1. Abra a aba **Actions** → workflow **build-apk** → último run verde.
-2. Baixe o artefato **`rea-ide-apk-arm64-v8a`** (celulares modernos) ou **`rea-ide-apk-all`**.
-3. Instale: `adb install -r rea-termux-ide-0.1.0-debug-arm64-v8a.apk`
-   (habilite "instalar de fontes desconhecidas" se for pelo celular).
+O Actions desta conta está desabilitado, então o build roda em outra máquina gratuita. Guia
+completo com custo e passo a passo: **[`docs/COMPILAR-SEM-ACTIONS.md`](docs/COMPILAR-SEM-ACTIONS.md)**.
 
-Não há APK commitado neste repositório — ele é sempre gerado pelo CI.
+**Mais rápido (2 minutos, nada para configurar)** — Google Cloud Shell:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/65202ee3-rea-termuxreboot/scripts/build_cloudshell.sh | bash
+# no fim: ~/rea-apk/rea-termux-ide-*.apk  (⋮ → Download)
+```
+
+**Automático a cada push** — escolha um:
+
+| CI | Arquivo já no repo | Grátis |
+|---|---|---|
+| GitLab CI (espelha o GitHub) | [`.gitlab-ci.yml`](.gitlab-ci.yml) | 400 min/mês |
+| Codemagic (conecta no GitHub) | [`codemagic.yaml`](codemagic.yaml) | 500 min/mês |
+| Azure Pipelines | [`azure-pipelines.yml`](azure-pipelines.yml) | 1.800 min/mês |
+| GitHub Actions (quando religar) | [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) | 2.000 min/mês |
+
+Depois: `adb install -r rea-termux-ide-0.1.0-debug-arm64-v8a.apk`.
+
+Não há APK commitado neste repositório — ele é sempre gerado por um runner.
 
 ## Build local
 

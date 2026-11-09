@@ -1,0 +1,97 @@
+# Codemagic — CI Android grátis (500 min/mês) que builda direto do GitHub,
+# sem precisar de espelho e sem depender do GitHub Actions.
+#
+# Setup (5 minutos, sem instalar nada):
+#   1. codemagic.io/signup → "Log in with GitHub" → autorize o app
+#   2. Add application → escolha Legitms9/Rea-termuxReboot
+#   3. "Start your first build" → escolha o workflow `android-apk`
+#   4. o APK aparece em Artifacts de cada build (link de download público, 30 dias)
+#
+# Também dá para disparar por API/curl, então serve como "botão de build" remoto.
+
+workflows:
+  android-apk:
+    name: REA IDE APK (arm64)
+    instance_type: linux_x2
+    max_build_duration: 60
+    environment:
+      groups: []                        # nenhum secret obrigatório
+      vars:
+        REA_APP_ID: io.rea.ide
+        BOOTSTRAP_RELEASE: "bootstrap-2026.11.08-r1+apt.android-7"
+        ABIS: arm64-v8a
+      java: 17
+      node: 20
+      python: 3.11
+    triggering:
+      events: [push]
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: 'arena/*'
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - name: invariante do applicationId
+        script: python3 scripts/patch_bootstrap.py --check --app-id "$REA_APP_ID"
+
+      - name: testes do patcher (sem rede)
+        script: python3 scripts/test_prepare_bootstrap.py
+
+      - name: editor web + testes
+        script: |
+          cd web
+          npm ci --no-audit --no-fund
+          npm run build
+          npm test
+
+      - name: bootstrap do Termux (prefixo reescrito, sha256 verificado)
+        script: |
+          python3 scripts/prepare_bootstrap.py \
+            --release "$BOOTSTRAP_RELEASE" \
+            --app-id "$REA_APP_ID" \
+            --abis "$ABIS" \
+            --out-dir app/src/main/jniLibs \
+            --cache-dir "$CM_BUILD_DIR/.bootstrap-cache"
+
+      - name: validar o bootstrap gerado
+        script: |
+          python3 - <<'PY'
+          import pathlib, zipfile
+          p = pathlib.Path("app/src/main/jniLibs/arm64-v8a/libtermux-bootstrap.so")
+          z = zipfile.ZipFile(p)
+          data = z.read("bin/bash")
+          assert data[:4] == b"\x7fELF"
+          assert b"/data/data/io.rea.ide/files/usr" in data
+          assert b"/data/data/com.termux" not in data
+          print("bootstrap ok:", len(z.namelist()), "entradas")
+          PY
+
+      - name: instalar NDK
+        script: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "ndk;26.1.10909125" > /dev/null
+
+      - name: build APK
+        script: |
+          ./gradlew --no-daemon assembleDebug \
+            -Prea.bootstrapRelease="$BOOTSTRAP_RELEASE" \
+            -Prea.webPrefetched=true
+
+    artifacts:
+      - app/build/outputs/apk/**/*.apk
+      - app/build/outputs/apk/**/*.json
+
+    publishing:
+      # Notificação por e-mail é opcional: crie o grupo "email" em Codemagic → Teams →
+      # Environment variables com a variável CM_EMAIL_RECIPIENT e descomente.
+      # email:
+      #   recipients: [${CM_EMAIL_RECIPIENT}]
+      #   notify:
+      #     success: true
+      #     failure: true
+      scripts:
+        - name: resumo
+          script: |
+            echo "APK em app/build/outputs/apk/debug/"
+            ls -la app/build/outputs/apk/debug/ || true

@@ -1,0 +1,97 @@
+# GitLab CI — alternativa ao GitHub Actions (que está desabilitado nesta conta).
+#
+# GitLab.com dá 400 min/mês de runners Linux gratuitos (4000 em contas verificadas com cartão).
+# Este build gasta ~8 min, então dá para ~50 builds/mês.
+#
+# Como usar, sem instalar nada:
+#   1. github.com/Legitms9/Rea-termuxReboot  →  Settings → General → "Export"
+#      (ou crie o projeto no GitLab em "New project → Import project → GitHub")
+#   2. o GitLab espelha o repo e este arquivo passa a rodar sozinho a cada push
+#   3. o APK sai como *artefato do pipeline* (CI/CD → Pipelines → build-apk → Browse artifacts)
+#
+# Se preferir espelho contínuo: GitLab project → Settings → Repository → Mirroring repositories
+# → "Pull" do GitHub a cada hora. Assim você continua no GitHub e o build mora no GitLab.
+
+stages: [test, build]
+
+variables:
+  REA_APP_ID: io.rea.ide
+  BOOTSTRAP_RELEASE: 'bootstrap-2026.11.08-r1+apt.android-7'
+  ABIS: arm64-v8a
+  GIT_DEPTH: '20'
+
+.python:
+  image: python:3.11-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates > /dev/null
+
+# ------------------------------------------------------------------ testes rápidos
+test:scripts:
+  extends: .python
+  stage: test
+  script:
+    - echo "invariante do applicationId"
+    - python3 scripts/patch_bootstrap.py --check --app-id "$REA_APP_ID"
+    - echo "patcher do bootstrap (sem rede)"
+    - python3 scripts/test_prepare_bootstrap.py
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_BRANCH
+
+test:web:
+  stage: test
+  image: node:20-slim
+  script:
+    - cd web
+    - npm ci --no-audit --no-fund
+    - npm run build
+    - npm test
+  artifacts:
+    paths: [web/dist]
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_BRANCH
+
+# ------------------------------------------------------------------ APK
+build:apk:
+  stage: build
+  image: ghcr.io/cirruslabs/android-sdk:34
+  # ^ imagem oficial-ish de CI Android: já traz SDK 34, build-tools e o NDK 26.1 em /opt/android-sdk
+  variables:
+    GRADLE_USER_HOME: $CI_PROJECT_DIR/.gradle
+    ANDROID_SDK_ROOT: /opt/android-sdk
+    ANDROID_HOME: /opt/android-sdk
+  cache:
+    key: gradle-$CI_COMMIT_REF_SLUG
+    paths: [.gradle/caches, .gradle/wrapper]
+  needs: [test:web]
+  before_script:
+    - export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+    - java -version
+    - if ! command -v gh > /dev/null; then apt-get update -qq && apt-get install -y -qq curl; fi
+    - python3 --version
+    - echo "docker sem Android SDK: ndk/compileSdk vêm da imagem"
+  script:
+    - echo "1/4 bootstrap do Termux (prefixo reescrito)"
+    - |
+      python3 scripts/prepare_bootstrap.py \
+        --release "$BOOTSTRAP_RELEASE" \
+        --app-id "$REA_APP_ID" \
+        --abis "$ABIS" \
+        --out-dir app/src/main/jniLibs \
+        --cache-dir build/bootstrap-cache
+    - echo "2/4 APK"
+    - |
+      ./gradlew --no-daemon assembleDebug \
+        -Prea.bootstrapRelease="$BOOTSTRAP_RELEASE" \
+        -Prea.webPrefetched=true
+    - echo "3/4 artefato"
+    - mkdir -p out && find app/build/outputs/apk -name '*.apk' -exec cp {} out/ \;
+    - cd out && sha256sum *.apk | tee SHA256SUMS.txt && ls -la
+  artifacts:
+    name: "rea-ide-apk-$CI_COMMIT_SHORT_SHA"
+    paths: [out/]
+    expire_in: 3 months
+  rules:
+    - if: $CI_COMMIT_BRANCH

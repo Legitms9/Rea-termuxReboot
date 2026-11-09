@@ -1,0 +1,96 @@
+# Azure Pipelines — mais uma alternativa ao GitHub Actions.
+# 1.800 minutos/mês grátis em repositórios públicos, e o build não consome nada da sua máquina.
+#
+# Setup: dev.azure.com → New project → Pipelines → New pipeline → GitHub →
+#        escolha Legitms9/Rea-termuxReboot → "Existing Azure Pipelines YAML file" → este arquivo.
+# O APK sai como "artifact" publicado em cada run (aba Artifacts do build).
+
+trigger:
+  branches:
+    include: [main, arena/*]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  REA_APP_ID: io.rea.ide
+  BOOTSTRAP_RELEASE: 'bootstrap-2026.11.08-r1+apt.android-7'
+  ABIS: arm64-v8a
+  GRADLE_USER_HOME: $(Pipeline.Workspace)/.gradle
+
+jobs:
+  - job: build_apk
+    displayName: 'REA IDE APK (arm64)'
+    pool:
+      vmImage: ubuntu-latest        # já traz JDK 17 e Android SDK
+    timeoutInMinutes: 60
+
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.11'
+
+      - task: NodeTool@0
+        inputs:
+          versionSpec: '20.x'
+
+      - script: |
+          echo "== invariante do applicationId"
+          python3 scripts/patch_bootstrap.py --check --app-id "$(REA_APP_ID)"
+          echo "== testes do patcher"
+          python3 scripts/test_prepare_bootstrap.py
+        displayName: 'guard + testes (sem rede)'
+
+      - script: |
+          cd web
+          npm ci --no-audit --no-fund
+          npm run build
+          npm test
+        displayName: 'editor web + testes'
+
+      - script: |
+          python3 scripts/prepare_bootstrap.py \
+            --release "$(BOOTSTRAP_RELEASE)" \
+            --app-id "$(REA_APP_ID)" \
+            --abis "$(ABIS)" \
+            --out-dir app/src/main/jniLibs \
+            --cache-dir "$(Pipeline.Workspace)/bootstrap-cache"
+        displayName: 'bootstrap do Termux (prefixo reescrito)'
+
+      - script: |
+          python3 - <<'PY'
+          import pathlib, zipfile
+          p = pathlib.Path("app/src/main/jniLibs/arm64-v8a/libtermux-bootstrap.so")
+          z = zipfile.ZipFile(p)
+          data = z.read("bin/bash")
+          assert data[:4] == b"\x7fELF"
+          assert b"/data/data/io.rea.ide/files/usr" in data
+          assert b"/data/data/com.termux" not in data
+          print("bootstrap ok:", len(z.namelist()), "entradas")
+          PY
+        displayName: 'validar bootstrap'
+
+      - script: |
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "ndk;26.1.10909125" > /dev/null || true
+        displayName: 'NDK'
+
+      - script: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug \
+            -Prea.bootstrapRelease="$(BOOTSTRAP_RELEASE)" \
+            -Prea.webPrefetched=true
+        displayName: 'compilar APK'
+
+      - script: |
+          mkdir -p "$(Build.ArtifactStagingDirectory)/apk"
+          find app/build/outputs/apk -name '*.apk' -exec cp {} "$(Build.ArtifactStagingDirectory)/apk/" \;
+          cd "$(Build.ArtifactStagingDirectory)/apk" && sha256sum *.apk | tee SHA256SUMS.txt
+        displayName: 'preparar artefato'
+
+      - publish: $(Build.ArtifactStagingDirectory)/apk
+        artifact: rea-ide-apk
+        displayName: 'publicar artefato'
