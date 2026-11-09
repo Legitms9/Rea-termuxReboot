@@ -70,20 +70,58 @@ git push gitlab arena/65202ee3-rea-termuxreboot
 Runners: use os compartilhados do gitlab.com (padrão). A imagem `ghcr.io/cirruslabs/android-sdk:34`
 já traz SDK 34 + NDK, então o job é curto.
 
-## 3. Codemagic — conecta no GitHub em 5 minutos
+## 3. Codemagic — já conectado ✔
 
-1. <https://codemagic.io/signup> → *Log in with GitHub* → autorize.
-2. *Add application* → `Legitms9/Rea-termuxReboot` → *Check for configuration file* (ele acha o
-   `codemagic.yaml`).
-3. *Start new build* → workflow `android-apk`.
+App: [`codemagic.io/app/6af11769a4abdfa900b420cb`](https://codemagic.io/app/6af11769a4abdfa900b420cb/settings)
 
-O APK sai em **Artifacts** com link público (30 dias). Dá para disparar por API:
+O `codemagic.yaml` está na branch `arena/65202ee3-rea-termuxreboot` (vai para a `main` no merge
+do PR #1). Então, no **primeiro** build, escolha essa branch explicitamente — senão a Codemagic
+não acha a configuração:
+
+```
+Codemagic → app → Start new build
+  ├─ Branch: arena/65202ee3-rea-termuxreboot     ← não deixe "main"
+  └─ Workflow: android-apk
+```
+
+Ou, se preferir que o build de `main` funcione já: mergeie o PR #1.
+
+O que o workflow faz (9 passos): diagnóstico do ambiente → invariante do app id → testes do
+patcher → editor web + testes → download/verificação do bootstrap → **validação do prefixo dentro
+de `bin/bash`** → SDK/NDK → `assembleDebug` → conferência do conteúdo do APK (`libtermux*.so` e
+`assets/www/index.html` presentes) → artefato + `SHA256SUMS.txt`.
+
+Se algo falhar, o passo onde parou já diz o que é. Os três erros mais prováveis na primeira vez:
+
+| Passo que falha | Causa | O que fazer |
+|---|---|---|
+| `bootstrap do Termux` | Codemagic sem `gh` e download do GitHub bloqueado | adicione a variável `REA_BOOTSTRAP_PROXY` = `https://ghproxy.net/https://github.com` em *Environment variables* |
+| `Android SDK / NDK` | imagem sem NDK 26.1 | o passo instala; se falhar, troque `instance_type` para `mac_mini_m2` (também tem free tier) |
+| `build APK` | erro de compilação Java/C | me manda o trecho — é a primeira compilação real do projeto |
+
+### Configurações recomendadas em *Settings*
+
+- **Build triggers**: já vêm do `triggering:` do YAML (push em `main` e `arena/*`).
+- **Environment variables**: nenhuma obrigatória. Opcionais: `REA_BOOTSTRAP_PROXY`,
+  `CM_EMAIL_RECIPIENT` (para notificação por e-mail).
+- **Code signing (Android)**: **não é necessário** para o APK debug. Só configure se quiser
+  release assinado; nesse caso, o `app/build.gradle` já aceita
+  `REA_KEYSTORE_FILE`/`REA_KEYSTORE_PASSWORD`/`REA_KEY_ALIAS`/`REA_KEY_PASSWORD`.
+- **Dependency caching**: ligado pelo `cache:` do YAML (bootstrap + Gradle), o build repetido cai
+  de ~10 min para ~3 min.
+
+### Disparar pela API (opcional)
 
 ```sh
 curl -s -X POST https://api.codemagic.io/builds \
   -H "x-auth-token: $CODEMAGIC_TOKEN" -H "Content-Type: application/json" \
-  -d '{"appId":"SEU_APP_ID","workflowId":"android-apk","branch":"arena/65202ee3-rea-termuxreboot"}'
+  -d '{"appId":"6af11769a4abdfa900b420cb","workflowId":"android-apk",
+       "branch":"arena/65202ee3-rea-termuxreboot"}'
 ```
+
+### Antigo caminho de 5 minutos (para referência)
+
+O APK sai em **Artifacts** com link público (30 dias).
 
 ## 4. Azure Pipelines
 

@@ -296,11 +296,13 @@ static jint JNICALL termux_JNI_createPipeProcess(JNIEnv* env, jclass TERMUX_UNUS
     if (argv) { for (char** t = argv; *t; ++t) free(*t); free(argv); }
     if (envp) { for (char** t = envp; *t; ++t) free(*t); free(envp); }
 
-    jint out[3] = { fds[0], pid };
+    jint values[2];
+    values[0] = (jint) fds[0];
+    values[1] = (jint) pid;
     jint* p = (jint*) (*env)->GetPrimitiveArrayCritical(env, result, NULL);
     if (!p) return throw_runtime_exception(env, "GetPrimitiveArrayCritical failed");
-    p[0] = out[0];
-    p[1] = (jint) pid;
+    p[0] = values[0];
+    p[1] = values[1];
     (*env)->ReleasePrimitiveArrayCritical(env, result, p, 0);
     return 0;
 }
