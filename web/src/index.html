@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>REA Editor</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+  <div id="root">
+    <div id="tabbar" class="tabbar" role="tablist"></div>
+    <div id="editor" class="editor"></div>
+    <div id="welcome" class="welcome">
+      <div class="welcome-inner">
+        <div class="welcome-logo">&#9670;</div>
+        <h1>REA IDE</h1>
+        <p class="welcome-sub">Termux &middot; editor de código &middot; Linux no bolso</p>
+        <div class="welcome-actions">
+          <button data-action="open-file">Abrir arquivo</button>
+          <button data-action="new-file">Novo arquivo</button>
+          <button data-action="open-terminal">Terminal</button>
+        </div>
+        <p class="hint" id="welcome-hint">Dica: toque em <b>&#8942;</b> para ver atalhos e comandos.</p>
+      </div>
+    </div>
+    <div id="statusbar" class="statusbar">
+      <span id="status-path" class="status-item">sem arquivo</span>
+      <span class="status-spacer"></span>
+      <span id="status-pos" class="status-item">Ln 1, Col 1</span>
+      <span id="status-lang" class="status-item">—</span>
+      <span id="status-dirty" class="status-item status-dirty">●</span>
+    </div>
+    <div id="searchbar" class="searchbar" hidden>
+      <input id="search-input" type="text" placeholder="Buscar…" autocomplete="off" />
+      <button id="search-next">↓</button>
+      <button id="search-prev">↑</button>
+      <button id="search-close">✕</button>
+    </div>
+  </div>
+  <script>/*__JS__*/</script>
+</body>
+</html>

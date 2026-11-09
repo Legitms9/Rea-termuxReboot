@@ -1,0 +1,31 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "ReaTermuxReboot"
+
+// ---------------------------------------------------------------------------
+// Reused upstream modules (Apache-2.0, from termux/termux-app):
+//   vendor/termux/terminal-emulator  -> VT/xterm emulation core (pure Java + JNI pty)
+//   vendor/termux/terminal-view      -> Canvas renderer + text selection + IME plumbing
+// See vendor/termux/TERMUX-APP-LICENSE.md and docs/TERMUX-REUSE.md
+// ---------------------------------------------------------------------------
+include ':terminal-emulator'
+project(':terminal-emulator').projectDir = new File(rootDir, 'vendor/termux/terminal-emulator')
+
+include ':terminal-view'
+project(':terminal-view').projectDir = new File(rootDir, 'vendor/termux/terminal-view')
+
+include ':app'

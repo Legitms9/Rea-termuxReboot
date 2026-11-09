@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Rea" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/rea_bg</item>
+        <item name="android:statusBarColor">@color/rea_bg</item>
+        <item name="android:navigationBarColor">@color/rea_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="colorPrimary">@color/rea_accent</item>
+        <item name="colorAccent">@color/rea_accent</item>
+        <item name="android:textColorPrimary">@color/rea_text</item>
+        <item name="android:textColorSecondary">@color/rea_text_dim</item>
+    </style>
+
+    <style name="Rea.Text" parent="">
+        <item name="android:textColor">@color/rea_text</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="Rea.Text.Dim">
+        <item name="android:textColor">@color/rea_text_dim</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+
+    <style name="Rea.ToolbarButton">
+        <item name="android:background">@drawable/bg_toolbar_button</item>
+        <item name="android:textColor">@color/rea_text</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:minHeight">36dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:singleLine">true</item>
+    </style>
+
+    <style name="Rea.Key" parent="">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_margin">2dp</item>
+        <item name="android:background">@drawable/bg_key</item>
+        <item name="android:textColor">@color/rea_text</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:paddingStart">0dp</item>
+        <item name="android:paddingEnd">0dp</item>
+    </style>
+</resources>

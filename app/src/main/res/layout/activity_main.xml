@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.drawerlayout.widget.DrawerLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/drawer_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/rea_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- ============================ activity bar ============================ -->
+        <LinearLayout
+            android:id="@+id/activity_bar"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@color/rea_bg_panel"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp">
+
+            <TextView
+                android:id="@+id/logo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="◆ REA"
+                android:textColor="@color/rea_accent"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:paddingEnd="10dp" />
+
+            <TextView
+                android:id="@+id/tab_files"
+                style="@style/Rea.ToolbarButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Arquivos" />
+
+            <TextView
+                android:id="@+id/tab_editor"
+                style="@style/Rea.ToolbarButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Editor" />
+
+            <TextView
+                android:id="@+id/tab_terminal"
+                style="@style/Rea.ToolbarButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="Terminal" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/btn_run"
+                style="@style/Rea.ToolbarButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="▶ Run"
+                android:textColor="@color/rea_green" />
+
+            <TextView
+                android:id="@+id/btn_more"
+                style="@style/Rea.ToolbarButton"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="⋮" />
+        </LinearLayout>
+
+        <!-- ======================== editor + terminal pages ===================== -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <FrameLayout
+                android:id="@+id/editor_host"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <FrameLayout
+                android:id="@+id/terminal_host"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <!-- ============================ extra keys ============================= -->
+        <LinearLayout
+            android:id="@+id/extra_keys_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/rea_bg_panel"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/extra_keys_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp" />
+        </LinearLayout>
+
+        <!-- ======================= status / path breadcrumb ===================== -->
+        <LinearLayout
+            android:id="@+id/bottom_bar"
+            android:layout_width="match_parent"
+            android:layout_height="30dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@color/rea_bg_panel"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp">
+
+            <TextView
+                android:id="@+id/bottom_path"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="~/"
+                android:singleLine="true"
+                android:ellipsize="start"
+                android:textColor="@color/rea_text_dim"
+                android:textSize="10sp"
+                android:fontFamily="monospace" />
+
+            <TextView
+                android:id="@+id/bottom_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="pronto"
+                android:textColor="@color/rea_text_dim"
+                android:textSize="10sp"
+                android:fontFamily="monospace" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ================================ drawer ============================== -->
+    <LinearLayout
+        android:id="@+id/drawer_panel"
+        android:layout_width="300dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:orientation="vertical"
+        android:background="@color/rea_bg_panel">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="EXPLORER"
+            android:textColor="@color/rea_text_dim"
+            android:textSize="10sp"
+            android:letterSpacing="0.14"
+            android:padding="12dp" />
+
+        <TextView
+            android:id="@+id/drawer_path"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="~/projects"
+            android:textColor="@color/rea_text"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="8dp"
+            android:singleLine="true"
+            android:ellipsize="middle" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/file_list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:paddingBottom="12dp" />
+
+        <TextView
+            android:id="@+id/drawer_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="＋ novo arquivo    ⌄ subir    ⟳ recarregar"
+            android:textColor="@color/rea_accent"
+            android:textSize="11sp"
+            android:padding="12dp"
+            android:background="@color/rea_bg_elevated" />
+    </LinearLayout>
+</androidx.drawerlayout.widget.DrawerLayout>

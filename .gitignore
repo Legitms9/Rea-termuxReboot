@@ -1,0 +1,23 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+app/src/main/jniLibs/
+app/build/generated/
+
+# Node (web/)
+web/node_modules/
+web/dist/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# REA agent install (local only)
+node_modules/
+package-lock.json

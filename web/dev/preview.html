@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>REA IDE — preview do editor</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0e14;color:#d7dae0;font-family:system-ui,sans-serif}
+  #bar{display:flex;gap:6px;padding:8px;background:#0d1117;border-bottom:1px solid #1e2430;flex-wrap:wrap}
+  #bar button{background:#11151f;color:#d7dae0;border:1px solid #1e2430;border-radius:8px;padding:6px 10px;font-size:12px}
+  #bar button:active{background:#2a2140}
+  #log{position:fixed;right:8px;bottom:8px;width:260px;max-height:30vh;overflow:auto;background:#0d1117cc;
+       border:1px solid #1e2430;border-radius:8px;font-family:ui-monospace,monospace;font-size:10px;padding:6px;display:none}
+  #frame{width:100%;height:calc(100% - 49px);border:0}
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="openfile">Abrir arquivo</button>
+  <button id="term">Terminal</button>
+  <button id="readonly">Read-only</button>
+  <button id="wrap">Quebra de linha</button>
+  <button id="goto">Ir para linha 40</button>
+  <button id="logbtn">Log</button>
+</div>
+<iframe id="frame" src="index.html"></iframe>
+<div id="log"></div>
+<script>
+/**
+ * Preview harness: index.html expects window.ReaIdeBridge (provided by Android).
+ * Here we mock it so the editor can be exercised in a desktop browser.
+ */
+const frame = document.getElementById('frame');
+const logEl = document.getElementById('log');
+const log = (...a) => {
+  const line = document.createElement('div');
+  line.textContent = a.join(' ');
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+};
+
+let ready = false;
+const SAMPLE = `// hello from the REA IDE preview
+import { exec } from 'node:child_process';
+
+const PREFIX = '/data/data/io.rea.ide/files/usr';
+
+export async function bootstrap() {
+  const shells = ['bash', 'zsh', 'fish'];
+  for (const sh of shells) {
+    console.log(\`checking \${sh} in \${PREFIX}/bin\`);
+  }
+  return { ok: true, shells };
+}
+`;
+
+frame.addEventListener('load', () => {
+  const win = frame.contentWindow;
+  win.ReaIdeBridge = {
+    onReady() {
+      ready = true;
+      log('native: onReady');
+      win.ReaIde.openFile('/home/projects/hello-web/app.js', SAMPLE, null);
+    },
+    onContentChanged(path, content) {
+      log('native: save', path, `${content.length} chars`);
+    },
+    onCommand(action) {
+      log('native: command', action);
+      if (action === 'open-terminal') alert('Abriria a aba Terminal.');
+      if (action === 'new-file') win.ReaIde.openFile(`/home/projects/hello-web/novo-${Date.now()}.md`, '# novo arquivo\n', null);
+      if (action === 'open-file') win.ReaIde.openFile('/home/projects/hello-web/index.html', '<h1>Hello REA</h1>\n', null);
+    },
+  };
+});
+
+document.getElementById('openfile').onclick = () => frame.contentWindow.ReaIde.openFile(
+  '/home/projects/hello-web/index.html',
+  '<!doctype html>\n<html>\n  <body>\n    <h1>Hello REA</h1>\n  </body>\n</html>\n', null);
+document.getElementById('term').onclick = () => alert('Abriria a aba Terminal (Termux terminal-view).');
+document.getElementById('readonly').onclick = () => {
+  const w = frame.contentWindow;
+  w.__ro = !w.__ro;
+  w.ReaIde.setReadOnly(w.__ro);
+};
+document.getElementById('wrap').onclick = () => {
+  const w = frame.contentWindow;
+  w.__wrap = !w.__wrap;
+  w.ReaIde.setWordWrap(w.__wrap);
+};
+document.getElementById('goto').onclick = () => frame.contentWindow.ReaIde.gotoLine(40, 1);
+document.getElementById('logbtn').onclick = () => {
+  logEl.style.display = logEl.style.display === 'block' ? 'none' : 'block';
+};
+</script>
+</body>
+</html>

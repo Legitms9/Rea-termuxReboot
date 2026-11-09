@@ -1,0 +1,152 @@
+plugins {
+    id 'com.android.application'
+}
+
+def appId = rootProject.ext.reaAppId
+def bootstrapRelease = project.findProperty('rea.bootstrapRelease')
+
+android {
+    namespace 'io.rea.ide'
+    compileSdk rootProject.ext.reaCompileSdk
+    ndkVersion rootProject.ext.reaNdkVersion
+
+    defaultConfig {
+        applicationId appId
+        minSdk rootProject.ext.reaMinSdk
+        targetSdk rootProject.ext.reaTargetSdk
+
+        versionCode 1
+        versionName "0.1.0"
+
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
+        }
+    }
+
+    signingConfigs {
+        // CI signs with a throwaway keystore so artifacts are installable.
+        // Real releases should set REA_KEYSTORE_* environment variables.
+        release {
+            def ks = System.getenv("REA_KEYSTORE_FILE")
+            if (ks != null && !ks.isEmpty()) {
+                storeFile file(ks)
+                storePassword System.getenv("REA_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("REA_KEY_ALIAS")
+                keyPassword System.getenv("REA_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ""
+        }
+        release {
+            minifyEnabled false
+            signingConfig = signingConfigs.release.storeFile != null ? signingConfigs.release : null
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    packaging {
+        // The bootstrap archives are shipped as lib*.so files (see prepareBootstrap)
+        // so that each ABI gets its own prefix-rewritten archive.
+        jniLibs {
+            useLegacyPackaging true
+        }
+        resources {
+            excludes += ['META-INF/*.kotlin_module', 'META-INF/LICENSE*', 'META-INF/NOTICE*']
+        }
+    }
+
+    androidResources {
+        ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~"
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += ["$buildDir/generated/web-assets"]
+        }
+    }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def abi = output.getFilter(com.android.build.OutputFile.ABI)
+            outputFileName = new File(
+                "rea-termux-ide-${variant.versionName}-${variant.buildType.name}-${abi ?: 'universal'}.apk")
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.annotation:annotation:1.7.1'
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.viewpager:viewpager:1.0.0'
+    implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+    implementation 'androidx.preference:preference:1.2.1'
+
+    implementation project(':terminal-view')
+    implementation project(':terminal-emulator')
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+// ---------------------------------------------------------------------------
+// Web IDE bundle (CodeMirror 6) -> assets/www
+// ---------------------------------------------------------------------------
+def webDir = file("$rootDir/web")
+def webDist = file("$webDir/dist")
+def generatedAssets = file("$buildDir/generated/web-assets")
+
+tasks.register('buildWeb', Exec) {
+    group = 'rea'
+    description = 'Bundles the CodeMirror-based editor into web/dist'
+    workingDir webDir
+    commandLine 'sh', '-c', 'node --version && npm ci --no-audit --no-fund && npm run build'
+    inputs.files(fileTree(webDir) { include 'src/**', 'package.json', 'package-lock.json', 'build.mjs' })
+    outputs.dir webDist
+}
+
+tasks.register('copyWebAssets', Copy) {
+    dependsOn 'buildWeb'
+    from webDist
+    into new File(generatedAssets, 'www')
+}
+
+/**
+ * CI builds the web bundle in its own job and hands it over as an artifact
+ * (-Prea.webPrefetched=true), so the Gradle task only has to copy it.
+ */
+tasks.register('copyPrefetchedWeb', Copy) {
+    onlyIf { project.findProperty('rea.webPrefetched') == 'true' }
+    from webDist
+    into new File(generatedAssets, 'www')
+}
+
+tasks.register('checkBootstrap') {
+    doLast {
+        def abis = (project.findProperty('rea.abis') ?: 'arm64-v8a').toString().split(',')
+        def missing = abis.findAll { !file("src/main/jniLibs/${it}/libtermux-bootstrap.so").exists() }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Bootstrap ausente para ${missing}.\n" +
+                "Rode: python3 scripts/prepare_bootstrap.py --release ${bootstrapRelease} " +
+                "--app-id ${appId} --abis ${abis.join(',')} --out-dir app/src/main/jniLibs " +
+                "--cache-dir build/bootstrap-cache")
+        }
+    }
+}
+
+def webPrefetched = project.findProperty('rea.webPrefetched') == 'true'
+preBuild.dependsOn(webPrefetched ? 'copyPrefetchedWeb' : 'copyWebAssets')
+preBuild.dependsOn 'checkBootstrap'

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Editor chrome: VS Code / Cursor dark, tuned for OLED phones. -->
+    <color name="rea_bg">#0B0E14</color>
+    <color name="rea_bg_elevated">#11151F</color>
+    <color name="rea_bg_panel">#0D1117</color>
+    <color name="rea_border">#1E2430</color>
+    <color name="rea_text">#D7DAE0</color>
+    <color name="rea_text_dim">#8B93A7</color>
+    <color name="rea_accent">#7C5CFF</color>
+    <color name="rea_accent_soft">#2A2140</color>
+    <color name="rea_green">#3FB950</color>
+    <color name="rea_red">#F85149</color>
+    <color name="rea_yellow">#D29922</color>
+    <color name="rea_terminal_bg">#0A0D13</color>
+</resources>
