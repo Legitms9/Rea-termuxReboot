@@ -181,6 +181,11 @@ def is_elf(path: Path) -> bool:
 
 
 def needs_exec(name: str, path: Path) -> bool:
+    """
+    Mirrors termux-app's TermuxInstaller: bin/, libexec/, apt's methods and helper, plus the
+    bootstrap script. Shared objects under lib/ are dlopen()ed, never executed, and zipfile
+    extraction does not restore mode bits, so we cannot (and must not) rely on them.
+    """
     if name in EXEC_FILES or any(name.startswith(p) for p in EXEC_PREFIXES):
         return True
     return is_elf(path) and (os.stat(path).st_mode & 0o111) != 0
@@ -220,7 +225,29 @@ def patch_tree(root: Path, app_id: str) -> tuple:
     return files, hits
 
 
+def read_upstream_symlinks(root: Path) -> list:
+    """
+    Upstream archives do not store symlinks as zip entries: they list them in SYMLINKS.txt as
+    "<target>←<link>" (see termux-app's TermuxInstaller). If we rebuilt that file from the
+    extracted tree alone we would silently drop every symlink — including bin/sh, bin/awk and
+    friends — and leave a prefix where bash exists but nothing else resolves.
+    """
+    path = root / "SYMLINKS.txt"
+    pairs = []
+    if not path.exists():
+        return pairs
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "←" not in line:
+            continue
+        target, link = line.split("←", 1)
+        target, link = target.strip(), link.strip()
+        if target and link:
+            pairs.append([target, link])
+    return pairs
+
+
 def write_manifests(root: Path) -> None:
+    upstream_symlinks = read_upstream_symlinks(root)
     entries, symlinks, execs = [], [], []
     for dirpath, _dirnames, filenames in os.walk(root):
         for filename in filenames:
@@ -235,16 +262,22 @@ def write_manifests(root: Path) -> None:
                 execs.append(rel)
             entries.append(rel)
 
+    # Merge: symlinks that came as zip entries win over the manifest's, same link path.
+    merged = {link: target for target, link in upstream_symlinks}
+    for target, link in symlinks:
+        merged[link] = target
+    symlinks = sorted([[target, link] for link, target in merged.items()], key=lambda p: p[1])
+
     # Upstream SYMLINKS.txt format is "<target>←<link>", one per line.
     (root / "SYMLINKS.txt").write_text(
-        "".join(f"{t}←{l}\n" for t, l in sorted(symlinks)), encoding="utf-8"
+        "".join(f"{t}←{l}\n" for t, l in symlinks), encoding="utf-8"
     )
     (root / "REA-INSTALL-MANIFEST.json").write_text(
         json.dumps({
             "version": 1,
             "fileCount": len(entries),
             "executables": sorted(execs),
-            "symlinks": sorted(symlinks),
+            "symlinks": symlinks,
         }, separators=(",", ":")),
         encoding="utf-8",
     )

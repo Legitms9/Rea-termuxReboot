@@ -1,0 +1,30 @@
+name: scripts-tests
+
+# Fast, network-free tests for the build tooling: the bootstrap patcher is the one piece of
+# this project that can produce an APK which installs and then cannot run a shell.
+
+on:
+  push:
+    branches: [main, 'arena/**']
+  pull_request:
+
+jobs:
+  python:
+    name: prepare_bootstrap (patch + manifest + repack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 scripts/test_prepare_bootstrap.py
+      - name: invariante do applicationId
+        run: python3 scripts/patch_bootstrap.py --check --app-id io.rea.ide
+      - name: patch_bootstrap em diretório temporário
+        run: |
+          set -e
+          d="$(mktemp -d)"
+          printf '/data/data/com.termux/files/usr/bin/sh\n' > "$d/script.sh"
+          python3 scripts/patch_bootstrap.py "$d"
+          grep -q '/data/data/io.rea.ide/files/usr/bin/sh' "$d/script.sh"
+          echo "patch in-place ok ($(wc -c < "$d/script.sh") bytes, tamanho preservado)"

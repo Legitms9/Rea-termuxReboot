@@ -42,8 +42,16 @@ cd web && npm ci && npm run build && cd ..
 # app/build/outputs/apk/debug/rea-termux-ide-0.1.0-debug-arm64-v8a.apk
 ```
 
+Sem Android SDK na máquina? Use o container:
+
+```sh
+docker build -f docker/Dockerfile -t rea-ide-build .
+mkdir -p out && docker run --rm -v "$PWD/out:/out" -v "$PWD:/src" -w /src \
+  -e GH_TOKEN="$(gh auth token)" rea-ide-build
+```
+
 Só quer ver a UI do editor, sem Android? `cd web && npm run build && npm run preview` →
-<http://localhost:8080/>.
+<http://localhost:8080/> (o harness `web/dev/preview.html` simula a ponte nativa).
 
 ## Como funciona (o pulo do gato)
 
@@ -70,6 +78,16 @@ Detalhes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 ao upstream, exceto o glue JNI. Nada de `termux-app`/`termux-shared` (GPLv3) foi copiado.
 Mapa completo: [`docs/TERMUX-REUSE.md`](docs/TERMUX-REUSE.md).
 
+## Testes
+
+| O que | Comando | Cobre |
+|---|---|---|
+| patcher do bootstrap | `python3 scripts/test_prepare_bootstrap.py` | patch in place, ELF intacto, symlinks do upstream, manifesto de permissões, repack |
+| invariante do app id | `python3 scripts/patch_bootstrap.py --check` | prefixo de mesmo tamanho |
+| editor (DOM real) | `cd web && npm test` | abrir/editar/achar/undo por aba, autosave, close |
+| filtro ANSI | `cd web && npm test` | equivalência com `LineFilterTest` (JVM) |
+| JVM | `./gradlew test` | `LineFilterTest` |
+
 ## Estrutura
 
 ```
@@ -85,6 +103,8 @@ web/                      editor CodeMirror 6 (esbuild, bundle único, sem rede)
   dev/preview.html        harness de preview com bridge mockado
   test/editor.test.mjs    smoke test em jsdom (roda no CI)
 scripts/                  prepare_bootstrap.py, patch_bootstrap.py, publish_bootstrap.py
+                          + test_prepare_bootstrap.py
+docker/                   Dockerfile + entrypoint para build sem SDK local
 docs/                     ARCHITECTURE, TERMUX-REUSE, REA-REVERSE-ENGINEERING
 ```
 
