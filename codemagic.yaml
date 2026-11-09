@@ -192,6 +192,7 @@ workflows:
           set +e
           bash ./gradlew --no-daemon --stacktrace assembleDebug \
             -Prea.bootstrapRelease="$BOOTSTRAP_RELEASE" \
+            -Prea.abis="$ABIS" \
             -Prea.webPrefetched=true 2>&1 | tee "$CM_BUILD_DIR/gradle.log"
           GRADLE_EXIT=${PIPESTATUS[0]}
 
@@ -220,6 +221,7 @@ workflows:
           APKS=$(find app/build/outputs/apk -name '*.apk')
           [ -n "$APKS" ] || { echo "nenhum APK gerado"; exit 1; }
           echo "$APKS" | wc -l | xargs echo "APKs gerados:"
+          FOUND_ABIS=" "
           for APK in $APKS; do
             echo
             echo "== $(basename "$APK") ($(du -h "$APK" | cut -f1))"
@@ -228,6 +230,7 @@ workflows:
             # 1. só pode existir a ABI daquele APK (senão o split não funcionou)
             COUNT=$(unzip -l "$APK" | grep -c "lib/.*\.so" || true)
             echo "   abi=$ABI  bibliotecas=$COUNT"
+            FOUND_ABIS="$FOUND_ABIS$ABI "
             for lib in libtermux-bootstrap.so libtermux.so; do
               unzip -l "$APK" | grep -q "lib/$ABI/$lib" || { echo "ERRO: falta $lib"; exit 1; }
             done
@@ -255,6 +258,13 @@ workflows:
           assert b"/data/data/io.rea.ide/files/usr" in data, "prefixo não reescrito"
           print(f"   {sys.argv[1]}: bootstrap ok ({len(z.namelist())} entradas)")
           PY
+          done
+          # Nao basta validar os APKs existentes: cada ABI solicitada deve estar presente.
+          for expected in $(echo "${ABIS:?ABIS nao definida}" | tr ',' ' '); do
+            case "$FOUND_ABIS" in
+              *" $expected "*) echo "ABI solicitada encontrada: $expected" ;;
+              *) echo "ERRO: nenhum APK para ABI solicitada: $expected"; exit 1 ;;
+            esac
           done
           # macOS não tem sha256sum
           if command -v sha256sum > /dev/null 2>&1; then

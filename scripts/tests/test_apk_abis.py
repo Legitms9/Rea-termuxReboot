@@ -41,12 +41,15 @@ cases = [
         boot=b"not a zip"), False),
     # sem TMPDIR definido (como num shell "cru") o passo não pode falhar por caminho vazio
     ("ambiente sem TMPDIR", make('notmp.apk', ['arm64-v8a']), True),
+    ("falta ABI solicitada", make('missing32.apk', ['arm64-v8a']), False),
 ]
 
 fails = 0
 for label, apk, should_pass in cases:
     script = step.replace("APKS=$(find app/build/outputs/apk -name '*.apk')", f"APKS={apk}")
     env = dict(os.environ)
+    env['ABIS'] = ('arm64-v8a,armeabi-v7a' if label == 'falta ABI solicitada'
+                   else 'armeabi-v7a' if label == 'arm32 correto' else 'arm64-v8a')
     if "sem TMPDIR" in label:
         env.pop("TMPDIR", None)
         env.pop("RUNNER_TEMP", None)
