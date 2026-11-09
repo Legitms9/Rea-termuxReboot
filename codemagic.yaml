@@ -183,13 +183,34 @@ workflows:
 
       - name: build APK
         script: |
-          set -e
           chmod +x gradlew || true
           # Um APK por ABI (splits): arm64-v8a para celulares novos, armeabi-v7a para 32 bits.
           # `bash ./gradlew` em vez de ./gradlew: imune a bit de execução perdido no checkout.
+          #
+          # `set -e` de propósito FORA: queremos o log filtrando a causa, e o exit no fim.
+          set +e
           bash ./gradlew --no-daemon --stacktrace assembleDebug \
             -Prea.bootstrapRelease="$BOOTSTRAP_RELEASE" \
-            -Prea.webPrefetched=true
+            -Prea.webPrefetched=true 2>&1 | tee "$CM_BUILD_DIR/gradle.log"
+          GRADLE_EXIT=${PIPESTATUS[0]}
+
+          if [ "$GRADLE_EXIT" -ne 0 ]; then
+            echo
+            echo "==================== CAUSA (What went wrong) ===================="
+            # A parede de `at org.gradle...` esconde o essencial: mostra só o que importa.
+            sed -n '/What went wrong/,/\* Try/p' "$CM_BUILD_DIR/gradle.log" | head -60
+            echo "================================================================"
+            echo
+            echo "------------------ primeiros erros do compilador ------------------"
+            grep -nE "^e: |error: |^[^ ]*\.java:[0-9]+: error|^[^ ]*\.c:[0-9]+:[0-9]+: error|undeclared|cannot find symbol" \
+              "$CM_BUILD_DIR/gradle.log" | head -40
+            echo "-----------------------------------------------------------------"
+            echo
+            echo "---------------------- ultimas 40 linhas -----------------------"
+            tail -40 "$CM_BUILD_DIR/gradle.log"
+            exit 1
+          fi
+          echo "assembleDebug ok"
 
       - name: conferir cada APK (uma ABI por APK)
         script: |
