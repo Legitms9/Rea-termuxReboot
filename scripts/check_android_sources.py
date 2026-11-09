@@ -326,6 +326,21 @@ def _closed_types(types: dict[str, dict]) -> dict[str, dict]:
     return closed
 
 
+def _signature(method) -> tuple[str, ...]:
+    """Tipos dos parâmetros, normalizados: ('MotionEvent,', 'float') -> ('MotionEvent', 'float')."""
+    out = []
+    for prm in method.parameters:
+        base = getattr(prm.type, "name", "") or ""
+        sub = getattr(getattr(prm.type, "sub_type", None), "name", None)
+        if sub:
+            base = f"{base}.{sub}"
+        base += "[]" * len(getattr(prm.type, "dimensions", []) or [])
+        if getattr(prm, "varargs", False):
+            base += "..."
+        out.append(base)
+    return tuple(out)
+
+
 def _walk(body):
     """Percorre a árvore de um bloco. `body` pode ser BlockStatement ou lista de nós."""
     stack = [body]
@@ -469,13 +484,13 @@ def check_interface_impls(root: Path) -> None:
             if isinstance(inner, javalang.tree.InterfaceDeclaration):
                 # métodos sem corpo; `default` e `static` já têm implementação
                 interfaces[inner.name] = {
-                    m.name for m in inner.methods
+                    (m.name, _signature(m)) for m in inner.methods
                     if not ({"default", "static"} & set(m.modifiers or ()))
                 }
                 collect(inner, path)
             elif isinstance(inner, javalang.tree.ClassDeclaration):
                 types.setdefault(inner.name, (
-                    {m.name for m in inner.methods},
+                    {(m.name, _signature(m)) for m in inner.methods},
                     inner.extends.name if inner.extends else None,
                 ))
                 collect(inner, path)
@@ -487,18 +502,18 @@ def check_interface_impls(root: Path) -> None:
             continue
         for _, node in tree.filter(javalang.tree.ClassDeclaration):
             types.setdefault(node.name, (
-                {m.name for m in node.methods},
+                {(m.name, _signature(m)) for m in node.methods},
                 node.extends.name if node.extends else None,
             ))
             collect(node, path)
         for _, node in tree.filter(javalang.tree.InterfaceDeclaration):
             interfaces.setdefault(node.name, {
-                m.name for m in node.methods
+                (m.name, _signature(m)) for m in node.methods
                 if not ({"default", "static"} & set(m.modifiers or ()))
             })
             collect(node, path)
 
-    def inherited_methods(name: str, seen: frozenset[str] = frozenset()) -> set[str]:
+    def inherited_methods(name: str, seen: frozenset[str] = frozenset()) -> set[tuple]:
         if name in seen or name not in types:
             return set()
         methods, parent = types[name]
@@ -515,11 +530,17 @@ def check_interface_impls(root: Path) -> None:
                 if required is None:
                     continue  # interface do framework/androidx: fonte não está aqui
                 have = inherited_methods(node.name)
-                missing = sorted(required - have)
+                missing = sorted(set(required) - have)
                 if missing:
-                    shown = ", ".join(missing[:6]) + ("…" if len(missing) > 6 else "")
+                    shown = ", ".join(
+                        f"{name}({', '.join(sig)})" for name, sig in missing[:6]
+                    )
+                    tail = "…" if len(missing) > 6 else ""
+                    wrong_name = any(name in {n for n, _ in have} for name, _ in missing)
+                    hint = (" — mesmo nome existe, mas o tipo dos parâmetros é diferente"
+                            if wrong_name else "")
                     err(f"{path.relative_to(root)}: {node.name} implements {iface.name} "
-                        f"mas não implementa {len(missing)} método(s): {shown}")
+                        f"mas não implementa {len(missing)} método(s): {shown}{tail}{hint}")
 
 
 # ----------------------------------------------------- herança implícita de <style>

@@ -212,7 +212,25 @@ class AndroidSourceChecks(unittest.TestCase):
         self.assertTrue(any("aoFechar" in e for e in errors), errors)
 
     @needs_javalang
-    def test_interface_completa_com_heranca(self) -> None:
+    def test_interface_com_tipo_de_parametro_errado(self) -> None:
+        """Mesmo nome, tipo diferente: o compilador acusa 'does not override'."""
+        self.project.write("app/src/main/java/io/rea/ide/Listener.java", """\
+            package io.rea.ide;
+            public interface Listener {
+                void aoAbrir(String caminho);
+            }
+        """)
+        self.project.write("app/src/main/java/io/rea/ide/Impl.java", """\
+            package io.rea.ide;
+            public class Impl implements Listener {
+                public void aoAbrir(int caminho) {}
+            }
+        """)
+        errors = self.project.check()
+        self.assertTrue(any("aoAbrir" in e and "tipo" in e for e in errors), errors)
+
+    @needs_javalang
+    def test_interface_com_heranca(self) -> None:
         self.project.write("app/src/main/java/io/rea/ide/Listener.java", """\
             package io.rea.ide;
             public interface Listener {
