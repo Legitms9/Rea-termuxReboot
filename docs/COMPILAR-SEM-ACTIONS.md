@@ -86,6 +86,31 @@ Codemagic → app → Start new build
 
 Ou, se preferir que o build de `main` funcione já: mergeie o PR #1.
 
+### "Corrigi e a Codemagic mostra o mesmo erro"
+
+O app da Codemagic às vezes mantém em cache o `codemagic.yaml` do primeiro *check*. Como saber se
+é isso: a primeira linha do arquivo é um marcador de versão.
+
+```
+# rea-config-version: 3
+```
+
+- mostra **3** → é o arquivo atual, o erro é real;
+- mostra **1 ou 2** (ou nada) → é cópia velha. Force a releitura:
+
+1. toque no **↻** ao lado de *"Check for configuration files"*;
+2. se não atualizar: **Settings → Build configuration** → desligue `codemagic.yaml` e ligue de novo;
+3. pior caso: **Start new build** direto (o build clona o repo na hora e usa a versão correta —
+   a validação do editor é só uma pré-checagem).
+
+Você pode conferir o que está no GitHub sem sair do navegador:
+
+```
+https://raw.githubusercontent.com/Legitms9/Rea-termuxReboot/arena/65202ee3-rea-termuxreboot/codemagic.yaml
+```
+
+A linha 16 tem de ser `instance_type: linux` (sem `_x2`).
+
 ### Erros de schema do codemagic.yaml (já corrigidos)
 
 O schema da Codemagic usa `additionalProperties: false`, então chave no lugar errado não gera
